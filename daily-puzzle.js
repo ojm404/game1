@@ -61,7 +61,7 @@ const CONFIG = {
     "Kaya Scodelario", "Henry Cavill", "Julia Stiles", "Kurt Russell",
     "James Spader", "Jennifer Lawrence", "James Corden", "Chris Pine",
     "Simon Pegg", "Zendaya", "Idris Elba", "Tom Cruise", "Penelope Cruz",
-    "Javier Bardem", "Daniel Craig",
+    "Javier Bardem", "Daniel Craig", "Kirsten Dunst", "Clint Eastwood", "Goldie Hawn", "Charlie Hunnam", "Jessica Chastain", "Mark Wahlberg", "Bryce Dallas Howard", "Tom Hardy", "Joseph Gordon-Levitt"
   ],
 
   // A puzzle must have a true shortest path in this range to be accepted.
