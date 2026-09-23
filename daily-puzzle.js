@@ -61,7 +61,7 @@ const CONFIG = {
     "Kaya Scodelario", "Henry Cavill", "Julia Stiles", "Kurt Russell",
     "James Spader", "Jennifer Lawrence", "James Corden", "Chris Pine",
     "Simon Pegg", "Zendaya", "Idris Elba", "Tom Cruise", "Penelope Cruz",
-    "Javier Bardem", "Daniel Craig", 
+    "Javier Bardem", "Daniel Craig",
   ],
 
   // A puzzle must have a true shortest path in this range to be accepted.
@@ -88,6 +88,7 @@ const CONFIG = {
 
   requestsPerBatch: 35,
   batchPauseMs: 10_000,
+  maxRetries: 5, // for 429s and transient 5xx errors, with backoff
 };
 
 function sleep(ms) {
@@ -107,12 +108,30 @@ function makeRateLimiter({ requestsPerBatch, batchPauseMs }) {
 }
 const limiter = makeRateLimiter(CONFIG);
 
-async function tmdb(urlPath) {
+async function tmdb(urlPath, attempt = 1) {
   const url = `${CONFIG.baseUrl}${urlPath}`;
   return limiter(async () => {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${TMDB_KEY}` },
     });
+
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt > CONFIG.maxRetries) {
+        throw new Error(`TMDB request failed after ${CONFIG.maxRetries} retries (${res.status}): ${url}`);
+      }
+      // TMDB sends Retry-After on 429s; fall back to exponential backoff if
+      // it's missing (also covers transient 5xx errors, which don't send it).
+      const retryAfterHeader = res.headers.get("Retry-After");
+      const waitMs = retryAfterHeader
+        ? Number(retryAfterHeader) * 1000
+        : 2 ** attempt * 1000; // 2s, 4s, 8s, ...
+      console.log(
+        `  TMDB returned ${res.status}, retrying in ${waitMs}ms (attempt ${attempt}/${CONFIG.maxRetries})`
+      );
+      await sleep(waitMs);
+      return tmdb(urlPath, attempt + 1);
+    }
+
     if (!res.ok) throw new Error(`TMDB request failed (${res.status}): ${url}`);
     return res.json();
   });
