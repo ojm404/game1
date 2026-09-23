@@ -61,7 +61,7 @@ const CONFIG = {
     "Kaya Scodelario", "Henry Cavill", "Julia Stiles", "Kurt Russell",
     "James Spader", "Jennifer Lawrence", "James Corden", "Chris Pine",
     "Simon Pegg", "Zendaya", "Idris Elba", "Tom Cruise", "Penelope Cruz",
-    "Javier Bardem", "Daniel Craig", "Kirsten Dunst", "Clint Eastwood", "Goldie Hawn", "Charlie Hunnam", "Jessica Chastain", "Mark Wahlberg", "Bryce Dallas Howard", "Tom Hardy", "Joseph Gordon-Levitt"
+    "Javier Bardem", "Daniel Craig", 
   ],
 
   // A puzzle must have a true shortest path in this range to be accepted.
@@ -74,6 +74,14 @@ const CONFIG = {
   // without it, a pair of very popular actors could pull in tens of
   // thousands of requests before connecting.
   maxActorsExpanded: 600,
+
+  // After the search connects the two actors, some nodes in the discovered
+  // graph were only ever seen as someone else's co-star — their own
+  // filmography was never fetched, which means every guess made FROM that
+  // node would fail even when correct. This caps how many such leaf actors
+  // get a one-time follow-up expansion so their nodes are actually
+  // playable. Doesn't chase their co-stars any further, so it stays bounded.
+  maxLeafExpansions: 400,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
@@ -279,6 +287,44 @@ function trimCacheToVisited(cache) {
   return { actors, movies };
 }
 
+/**
+ * The search stops the instant the two frontiers meet, to save API calls.
+ * That means some actors in the discovered graph were only ever added via
+ * expandMovie's co-star population (name only, empty .movies) — they were
+ * never personally the actor being searched from, so their own filmography
+ * was never fetched. Left as-is, any guess made from one of those nodes
+ * would fail regardless of whether it's actually correct.
+ *
+ * This does one bounded follow-up pass: expand every such leaf actor's own
+ * credits, and expand any newly-referenced movies too (so the new node has
+ * real connections) — but does NOT chase the co-stars of those new movies
+ * any further. That keeps this a fixed, one-level closure rather than
+ * reopening the same unbounded search the bidirectional BFS was built to
+ * avoid.
+ */
+async function fillInLeafActors(cache) {
+  const unexpanded = Object.keys(cache.actors).filter(
+    (id) => !cache.actors[id]._expanded
+  );
+
+  const toExpand = unexpanded.slice(0, CONFIG.maxLeafExpansions);
+  if (unexpanded.length > toExpand.length) {
+    console.log(
+      `  ${unexpanded.length} leaf actors found, only expanding the first ` +
+        `${toExpand.length} (maxLeafExpansions) — some nodes may stay unplayable`
+    );
+  } else if (toExpand.length > 0) {
+    console.log(`  filling in filmography for ${toExpand.length} leaf actor(s)...`);
+  }
+
+  for (const actorId of toExpand) {
+    const { movieIds } = await expandActor(actorId, cache);
+    for (const movieId of movieIds) {
+      await expandMovie(movieId, cache);
+    }
+  }
+}
+
 async function main() {
   fs.mkdirSync(CONFIG.outDir, { recursive: true });
 
@@ -302,6 +348,8 @@ async function main() {
       console.log("  no connection found within the search budget, trying a different pair");
       continue;
     }
+
+    await fillInLeafActors(cache);
 
     const { actors, movies } = trimCacheToVisited(cache);
     console.log(
