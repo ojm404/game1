@@ -75,13 +75,21 @@ const CONFIG = {
   // thousands of requests before connecting.
   maxActorsExpanded: 600,
 
+  // The search used to stop the instant the two frontiers touched, which
+  // meant only the minimal thread that found the connection first had real
+  // data — any other genuinely valid chain was usually missing and got
+  // rejected as wrong. This keeps expanding both frontiers this many more
+  // rounds after first contact, building real breadth around the
+  // connection so more than one true chain actually exists in the data.
+  extraRoundsAfterConnect: 2,
+
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
   // filmography was never fetched, which means every guess made FROM that
   // node would fail even when correct. This caps how many such leaf actors
   // get a one-time follow-up expansion so their nodes are actually
   // playable. Doesn't chase their co-stars any further, so it stays bounded.
-  maxLeafExpansions: 250,
+  maxLeafExpansions: 400,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
@@ -228,7 +236,15 @@ async function expandMovie(movieId, cache) {
 
 /**
  * Alternately expands the smaller of two frontiers outward from startId and
- * endId, one hop at a time, until they touch or the actor budget runs out.
+ * endId, one hop at a time. Used to stop the instant the frontiers touched —
+ * but that produced a graph with full data only for the minimal thread that
+ * found the connection first, so any other real, valid chain a player might
+ * try was usually missing and got rejected as if it were wrong. Now it keeps
+ * expanding for CONFIG.extraRoundsAfterConnect more rounds after first
+ * contact, so the shipped graph has genuine breadth around the connection
+ * point — multiple real chains, not just the one that happened to be found
+ * first — while still bounded by maxActorsExpanded overall.
+ *
  * Returns { found: bool, cache } — cache holds every actor/movie visited,
  * which becomes the puzzle's shipped graph regardless of outcome.
  */
@@ -238,11 +254,18 @@ async function bidirectionalSearch(startId, endId, cache) {
   const visitedA = new Set([startId]);
   const visitedB = new Set([endId]);
   let actorsExpanded = 0;
+  let found = false;
+  let extraRoundsRemaining = CONFIG.extraRoundsAfterConnect;
 
   cache.actors[startId] = cache.actors[startId] || { name: null, movies: [] };
   cache.actors[endId] = cache.actors[endId] || { name: null, movies: [] };
 
   while (frontA.size > 0 && frontB.size > 0) {
+    if (found) {
+      if (extraRoundsRemaining <= 0) break;
+      extraRoundsRemaining -= 1;
+    }
+
     const expandingA = frontA.size <= frontB.size;
     const frontier = expandingA ? frontA : frontB;
     const visitedSame = expandingA ? visitedA : visitedB;
@@ -252,7 +275,7 @@ async function bidirectionalSearch(startId, endId, cache) {
 
     for (const actorId of frontier) {
       if (actorsExpanded >= CONFIG.maxActorsExpanded) {
-        return { found: false, cache };
+        return { found, cache };
       }
       actorsExpanded += 1;
 
@@ -263,7 +286,7 @@ async function bidirectionalSearch(startId, endId, cache) {
 
         for (const coStarId of movie.cast) {
           if (visitedOther.has(coStarId)) {
-            return { found: true, cache }; // frontiers met
+            found = true; // frontiers have connected — keep going a bit more
           }
           if (!visitedSame.has(coStarId)) {
             visitedSame.add(coStarId);
@@ -277,7 +300,7 @@ async function bidirectionalSearch(startId, endId, cache) {
     else frontB = next;
   }
 
-  return { found: false, cache };
+  return { found, cache };
 }
 
 // ---------------------------------------------------------------------------
