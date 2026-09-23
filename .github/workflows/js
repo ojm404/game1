@@ -1,3 +1,5 @@
+FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
+
 /**
  * daily-puzzle.js
  *
