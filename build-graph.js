@@ -52,7 +52,7 @@ const CONFIG = {
 
   // Top-billed cast members kept per movie. Keeps hub movies from exploding
   // the branching factor and drops uncredited/extra roles.
-  maxCastPerMovie: 20,
+  maxCastPerMovie: 15,
 
   // Genre IDs to exclude outright (TMDB movie genre list).
   excludedGenreIds: new Set([
@@ -137,7 +137,7 @@ const CONFIG = {
   maxPairDistance: 5,
 
   // Be polite to TMDB's rate limit (40 req / 10s on the free tier).
-  requestsPerBatch: 35,
+  requestsPerBatch: 20,
   batchPauseMs: 10_000,
   maxRetries: 5, // for 429s and transient 5xx errors, with backoff
 };
