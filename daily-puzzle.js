@@ -39,7 +39,7 @@ const CONFIG = {
   baseUrl: "https://api.themoviedb.org/3",
   outDir: path.join(__dirname, "out"),
 
-  maxCastPerMovie: 20,
+  maxCastPerMovie: 17,
 
   excludedGenreIds: new Set([99]), // Documentary
 
@@ -61,7 +61,7 @@ const CONFIG = {
     "Kaya Scodelario", "Henry Cavill", "Julia Stiles", "Kurt Russell",
     "James Spader", "Jennifer Lawrence", "James Corden", "Chris Pine",
     "Simon Pegg", "Zendaya", "Idris Elba", "Tom Cruise", "Penelope Cruz",
-    "Javier Bardem", "Daniel Craig",
+    "Javier Bardem", "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Scarlett Johansson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt"
   ],
 
   // A puzzle must have a true shortest path in this range to be accepted.
@@ -86,15 +86,17 @@ const CONFIG = {
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
   // filmography was never fetched, which means every guess made FROM that
-  // node would fail even when correct. This caps how many such leaf actors
-  // get a one-time follow-up expansion so their nodes are actually
-  // playable. Doesn't chase their co-stars any further, so it stays bounded.
-  maxLeafExpansions: 400,
+  // node would fail even when correct. fillInLeafActors() now closes this
+  // iteratively (each round of newly-discovered actors gets expanded too,
+  // not just the first), so this is a TOTAL budget shared across every
+  // round, not a single pass. Raising it means fewer real dead ends
+  // further out in the graph, at the cost of more requests/runtime.
+  maxLeafExpansions: 250,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
 
-  requestsPerBatch: 35,
+  requestsPerBatch: 20,
   batchPauseMs: 10_000,
   maxRetries: 5, // for 429s and transient 5xx errors, with backoff
 };
@@ -337,33 +339,55 @@ function trimCacheToVisited(cache) {
  * was never fetched. Left as-is, any guess made from one of those nodes
  * would fail regardless of whether it's actually correct.
  *
- * This does one bounded follow-up pass: expand every such leaf actor's own
- * credits, and expand any newly-referenced movies too (so the new node has
- * real connections) — but does NOT chase the co-stars of those new movies
- * any further. That keeps this a fixed, one-level closure rather than
- * reopening the same unbounded search the bidirectional BFS was built to
- * avoid.
+ * A single follow-up pass isn't enough: expanding those actors' own
+ * filmographies surfaces a NEW wave of undiscovered co-stars (whoever was
+ * in the movies they were in), and that new wave needs expanding too, or
+ * you just push the dead-end one hop further out instead of removing it —
+ * which is exactly why the second hop kept failing even after the first
+ * pass. So this keeps expanding newly-discovered actors in rounds — the
+ * closure loop only stops when either nothing new turns up (the graph is
+ * fully closed — every reachable actor has real data) or the total budget
+ * runs out. Actors get expanded in the order they were first discovered,
+ * which naturally spends the budget on nodes closer to the core of the
+ * puzzle before it ever reaches obscure, unlikely-to-be-guessed ones.
  */
 async function fillInLeafActors(cache) {
-  const unexpanded = Object.keys(cache.actors).filter(
-    (id) => !cache.actors[id]._expanded
-  );
+  let totalExpanded = 0;
 
-  const toExpand = unexpanded.slice(0, CONFIG.maxLeafExpansions);
-  if (unexpanded.length > toExpand.length) {
-    console.log(
-      `  ${unexpanded.length} leaf actors found, only expanding the first ` +
-        `${toExpand.length} (maxLeafExpansions) — some nodes may stay unplayable`
+  while (totalExpanded < CONFIG.maxLeafExpansions) {
+    const unexpanded = Object.keys(cache.actors).filter(
+      (id) => !cache.actors[id]._expanded
     );
-  } else if (toExpand.length > 0) {
-    console.log(`  filling in filmography for ${toExpand.length} leaf actor(s)...`);
+
+    if (unexpanded.length === 0) {
+      console.log("  graph fully closed — every reachable actor has real filmography data");
+      return;
+    }
+
+    const remainingBudget = CONFIG.maxLeafExpansions - totalExpanded;
+    const batch = unexpanded.slice(0, remainingBudget);
+    console.log(
+      `  closure round: expanding ${batch.length} actor(s) ` +
+        `(${totalExpanded + batch.length}/${CONFIG.maxLeafExpansions} budget used)`
+    );
+
+    for (const actorId of batch) {
+      const { movieIds } = await expandActor(actorId, cache);
+      for (const movieId of movieIds) {
+        await expandMovie(movieId, cache);
+      }
+      totalExpanded += 1;
+    }
   }
 
-  for (const actorId of toExpand) {
-    const { movieIds } = await expandActor(actorId, cache);
-    for (const movieId of movieIds) {
-      await expandMovie(movieId, cache);
-    }
+  const stillUnexpanded = Object.keys(cache.actors).filter(
+    (id) => !cache.actors[id]._expanded
+  ).length;
+  if (stillUnexpanded > 0) {
+    console.log(
+      `  closure budget exhausted with ${stillUnexpanded} actor(s) still unexpanded — ` +
+        `those specific nodes may reject correct guesses if a player reaches them`
+    );
   }
 }
 
