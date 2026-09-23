@@ -81,7 +81,7 @@ const CONFIG = {
   // node would fail even when correct. This caps how many such leaf actors
   // get a one-time follow-up expansion so their nodes are actually
   // playable. Doesn't chase their co-stars any further, so it stays bounded.
-  maxLeafExpansions: 400,
+  maxLeafExpansions: 250,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
