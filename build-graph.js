@@ -129,6 +129,7 @@ const CONFIG = {
     "Penelope Cruz",
     "Javier Bardem",
     "Daniel Craig",
+    "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Scarlett Johansson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt"
   ],
 
   // Only keep pairs whose true shortest path is in this range — too close is
