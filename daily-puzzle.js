@@ -39,7 +39,7 @@ const CONFIG = {
   baseUrl: "https://api.themoviedb.org/3",
   outDir: path.join(__dirname, "out"),
 
-  maxCastPerMovie: 17,
+  maxCastPerMovie: 20,
 
   excludedGenreIds: new Set([99]), // Documentary
 
@@ -188,7 +188,9 @@ function makeGraphCache() {
 }
 
 async function expandActor(actorId, cache) {
-  if (cache.actors[actorId] && cache.actors[actorId]._expanded) return cache.actors[actorId];
+  if (cache.actors[actorId] && cache.actors[actorId]._expanded) {
+    return { movieIds: cache.actors[actorId].movies };
+  }
 
   const credits = await tmdb(`/person/${actorId}/movie_credits?language=en-US`);
   const personName =
