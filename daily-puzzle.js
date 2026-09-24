@@ -317,19 +317,27 @@ function pickTwoRandom(list) {
 }
 
 function trimCacheToVisited(cache) {
-  // Drop the internal _expanded/_excluded bookkeeping flags before writing
-  // output, and drop any movie that got excluded (Marvel/non-fiction) —
-  // it should never appear in the shipped puzzle graph.
-  const actors = {};
-  for (const [id, a] of Object.entries(cache.actors)) {
-    if (!a.name) continue; // never actually resolved — skip
-    actors[id] = { name: a.name, movies: a.movies || [] };
-  }
+  // Build the surviving movies first — this is what actors' movie lists
+  // need to be filtered against below, since an actor's raw credit list
+  // can reference a movie (Marvel, documentary) that never makes it into
+  // this output. Without that filter, the game would later try to look up
+  // a movie ID that doesn't exist and crash on every single guess.
   const movies = {};
   for (const [id, m] of Object.entries(cache.movies)) {
     if (m._excluded) continue;
     movies[id] = { title: m.title, year: m.year, cast: m.cast };
   }
+  const survivingMovieIds = new Set(Object.keys(movies).map(Number));
+
+  const actors = {};
+  for (const [id, a] of Object.entries(cache.actors)) {
+    if (!a.name) continue; // never actually resolved — skip
+    const survivingMovies = (a.movies || []).filter((movieId) =>
+      survivingMovieIds.has(movieId)
+    );
+    actors[id] = { name: a.name, movies: survivingMovies };
+  }
+
   return { actors, movies };
 }
 
