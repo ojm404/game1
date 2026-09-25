@@ -61,7 +61,9 @@ const CONFIG = {
     "Kaya Scodelario", "Henry Cavill", "Julia Stiles", "Kurt Russell",
     "James Spader", "Jennifer Lawrence", "James Corden", "Chris Pine",
     "Simon Pegg", "Zendaya", "Idris Elba", "Tom Cruise", "Penelope Cruz",
-    "Javier Bardem", "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Scarlett Johansson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt"
+    "Javier Bardem", "Daniel Craig", "Kirsten Dunst", "Kristen Stewart",
+    "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans",
+    "Chris Pratt",
   ],
 
   // A puzzle must have a true shortest path in this range to be accepted.
@@ -142,7 +144,11 @@ async function tmdb(urlPath, attempt = 1) {
       return tmdb(urlPath, attempt + 1);
     }
 
-    if (!res.ok) throw new Error(`TMDB request failed (${res.status}): ${url}`);
+    if (!res.ok) {
+      const err = new Error(`TMDB request failed (${res.status}): ${url}`);
+      err.status = res.status;
+      throw err;
+    }
     return res.json();
   });
 }
@@ -192,11 +198,22 @@ async function expandActor(actorId, cache) {
     return { movieIds: cache.actors[actorId].movies };
   }
 
-  const credits = await tmdb(`/person/${actorId}/movie_credits?language=en-US`);
-  const personName =
-    (cache.actors[actorId] && cache.actors[actorId].name) ||
-    (credits.cast && credits.cast[0] && credits.cast[0].original_title) || // rarely present; fallback below
-    null;
+  let credits;
+  try {
+    credits = await tmdb(`/person/${actorId}/movie_credits?language=en-US`);
+  } catch (err) {
+    if (err.status === 404) {
+      // TMDB occasionally merges duplicate person records, which can
+      // leave a stale ID behind. Treat as an actor with no further
+      // credits rather than crashing the whole run over one dead ID.
+      console.log(`  person ${actorId} returned 404 (likely merged on TMDB) — skipping`);
+      cache.actors[actorId] = cache.actors[actorId] || { name: null, movies: [] };
+      cache.actors[actorId].movies = [];
+      cache.actors[actorId]._expanded = true;
+      return { movieIds: [] };
+    }
+    throw err;
+  }
 
   const movieIds = (credits.cast || [])
     .filter(isFictionalCastCredit)
@@ -212,7 +229,22 @@ async function expandActor(actorId, cache) {
 async function expandMovie(movieId, cache) {
   if (cache.movies[movieId] && cache.movies[movieId]._expanded) return cache.movies[movieId];
 
-  const details = await tmdb(`/movie/${movieId}?language=en-US&append_to_response=credits,keywords`);
+  let details;
+  try {
+    details = await tmdb(`/movie/${movieId}?language=en-US&append_to_response=credits,keywords`);
+  } catch (err) {
+    if (err.status === 404) {
+      // TMDB periodically deletes or merges duplicate entries, so a movie
+      // ID that was valid when an actor's credits were fetched can later
+      // 404. Treat it the same as an excluded (Marvel/non-fiction) movie —
+      // empty cast, filtered out of the final output — instead of letting
+      // one stale ID crash the whole run.
+      console.log(`  movie ${movieId} returned 404 (likely deleted/merged on TMDB) — skipping`);
+      cache.movies[movieId] = { title: null, year: null, cast: [], _excluded: true, _expanded: true };
+      return cache.movies[movieId];
+    }
+    throw err; // anything else (network failure, retries exhausted) is still fatal
+  }
 
   if (isMarvelMovie(details) || isNonFictionMovie(details)) {
     cache.movies[movieId] = { title: details.title, year: null, cast: [], _excluded: true, _expanded: true };
