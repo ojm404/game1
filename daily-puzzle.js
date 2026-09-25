@@ -90,9 +90,14 @@ const CONFIG = {
   // node would fail even when correct. fillInLeafActors() now closes this
   // iteratively (each round of newly-discovered actors gets expanded too,
   // not just the first), so this is a TOTAL budget shared across every
-  // round, not a single pass. Raising it means fewer real dead ends
-  // further out in the graph, at the cost of more requests/runtime.
-  maxLeafExpansions: 250,
+  // round, not a single pass. Now that the main search always spends its
+  // full maxActorsExpanded budget (rather than stopping early), it
+  // discovers a much larger pool of never-personally-expanded co-stars
+  // than before — so this needs to scale up to match, or an increasingly
+  // small fraction of that larger pool ever gets real data. Watch the
+  // "closure budget exhausted with N actor(s) still unexpanded" log line
+  // after a run — if N is still large, raise this further.
+  maxLeafExpansions: 600,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
