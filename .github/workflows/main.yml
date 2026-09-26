@@ -26,6 +26,22 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Restore TMDB response cache
+        uses: actions/cache@v4
+        with:
+          path: cache
+          # Every run saves under a unique key (github.run_id), so this
+          # always creates a new cache entry — but restore-keys does a
+          # prefix match and pulls in the MOST RECENT prior one first, so
+          # each day builds on top of what every previous day already
+          # fetched rather than starting from nothing. This accumulates
+          # over time; GitHub evicts cache entries after 7 days unused or
+          # once the repo's total cache storage hits its cap, whichever
+          # comes first — nothing to manage manually either way.
+          key: tmdb-cache-${{ github.run_id }}
+          restore-keys: |
+            tmdb-cache-
+
       - name: Generate today's puzzle
         env:
           TMDB_KEY: ${{ secrets.TMDB_KEY }}
