@@ -27,7 +27,7 @@ jobs:
           node-version: "24"
 
       - name: Restore TMDB response cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: cache
           # Every run saves under a unique key (github.run_id), so this
@@ -55,5 +55,30 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add puzzle-data.js
-          git diff --staged --quiet || git commit -m "Daily puzzle: $(date -u +%Y-%m-%d)"
-          git push
+
+          if git diff --staged --quiet; then
+            echo "No change to puzzle-data.js — nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "Daily puzzle: $(date -u +%Y-%m-%d)"
+
+          # A manual run and the scheduled run can land close enough
+          # together that main moves between this job's checkout and its
+          # push — GitHub then rejects the push outright rather than risk
+          # silently overwriting the other run's commit. Since
+          # puzzle-data.js is fully regenerated every run, there's nothing
+          # to actually merge: on a conflict, just take this run's version
+          # and retry, rather than needing a human to resolve it.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt/5) — fetching latest and rebasing on top..."
+            git fetch origin main
+            git rebase origin/main -X ours
+          done
+
+          echo "Failed to push after 5 attempts."
+          exit 1
