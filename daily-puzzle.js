@@ -124,7 +124,24 @@ function makeRateLimiter({ requestsPerBatch, batchPauseMs }) {
 }
 const limiter = makeRateLimiter(CONFIG);
 
+const CACHE_DIR = path.join(__dirname, "cache");
+
+function cachePathFor(urlPath) {
+  const safe = urlPath.replace(/[^a-z0-9_-]/gi, "_");
+  return path.join(CACHE_DIR, `${safe}.json`);
+}
+
 async function tmdb(urlPath, attempt = 1) {
+  // Checked before the limiter, not inside it — a cache hit is a local
+  // disk read, so it shouldn't cost a rate-limit slot or a pacing pause.
+  // This is what lets a run reuse everything a PREVIOUS day's run already
+  // fetched (see .github/workflows/daily-puzzle.yml, which persists this
+  // folder across runs), instead of every day starting from nothing.
+  const file = cachePathFor(urlPath);
+  if (fs.existsSync(file)) {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  }
+
   const url = `${CONFIG.baseUrl}${urlPath}`;
   return limiter(async () => {
     const res = await fetch(url, {
@@ -153,7 +170,10 @@ async function tmdb(urlPath, attempt = 1) {
       err.status = res.status;
       throw err;
     }
-    return res.json();
+    const data = await res.json();
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data));
+    return data;
   });
 }
 
