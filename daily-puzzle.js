@@ -88,7 +88,7 @@ const CONFIG = {
     "Javier Bardem",
     "Daniel Craig",
     "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine", "Ryan Gosling", "Ben Affleck", "Emma Watson"
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael C[...]"
   ],
 
   // A puzzle's TRUE shortest path must fall in this range or main() will
@@ -548,6 +548,88 @@ async function fillInLeafActors(cache) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// New: hydrate cache from on-disk TMDB JSON files so previously-fetched
+// actor/movie details can be re-used to allow alternate/longer paths.
+// ---------------------------------------------------------------------------
+
+function hydrateCacheFromDisk(cache) {
+  // Try to fill missing actor movie lists and movie details from files already
+  // saved in CACHE_DIR (no network calls). This supplements the per-run cache
+  // using previous runs' TMDB responses so alternate/longer paths can be
+  // recognized even if they weren't expanded live this run.
+
+  // Hydrate actors' credits from disk cache if present
+  for (const actorId of Object.keys(cache.actors)) {
+    // If already expanded in this run, skip
+    if (cache.actors[actorId]._expanded) continue;
+
+    const creditsPath = `/person/${actorId}/movie_credits?language=en-US`;
+    const file = cachePathFor(creditsPath);
+    if (!fs.existsSync(file)) continue;
+
+    try {
+      const credits = JSON.parse(fs.readFileSync(file, "utf8"));
+      const movieIds = (credits.cast || [])
+        .filter(isFictionalCastCredit)
+        .map((c) => c.id);
+
+      cache.actors[actorId] = cache.actors[actorId] || { name: null, movies: [] };
+      cache.actors[actorId].movies = movieIds;
+      // Mark expanded because we used the cached filmography
+      cache.actors[actorId]._expanded = true;
+      // If the person record in the cached response included a name, use it
+      if (!cache.actors[actorId].name && credits.name) cache.actors[actorId].name = credits.name;
+    } catch (e) {
+      // If the cached file is corrupt, ignore and continue
+      console.log(`  failed to parse cached credits for person ${actorId}: ${e}`);
+    }
+  }
+
+  // Build set of movie ids referenced by (now hydrated) actors
+  const referencedMovieIds = new Set();
+  for (const a of Object.values(cache.actors)) {
+    for (const mid of (a.movies || [])) referencedMovieIds.add(Number(mid));
+  }
+
+  // Hydrate movie details from disk cache for any referenced movie
+  for (const movieId of Array.from(referencedMovieIds)) {
+    if (cache.movies[movieId] && cache.movies[movieId]._expanded) continue;
+
+    const moviePath = `/movie/${movieId}?language=en-US&append_to_response=credits,keywords`;
+    const file = cachePathFor(moviePath);
+    if (!fs.existsSync(file)) continue;
+
+    try {
+      const details = JSON.parse(fs.readFileSync(file, "utf8"));
+
+      if (isMarvelMovie(details) || isNonFictionMovie(details)) {
+        cache.movies[movieId] = { title: details.title, year: null, cast: [], _excluded: true, _expanded: true };
+        continue;
+      }
+
+      const cast = ((details.credits && details.credits.cast) || [])
+        .filter(isFictionalCastCredit)
+        .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+        .slice(0, CONFIG.maxCastPerMovie);
+
+      for (const c of cast) {
+        if (!cache.actors[c.id]) cache.actors[c.id] = { name: c.name, movies: [] };
+        if (!cache.actors[c.id].name) cache.actors[c.id].name = c.name;
+      }
+
+      cache.movies[movieId] = {
+        title: details.title,
+        year: (details.release_date || "").slice(0, 4) || null,
+        cast: cast.map((c) => c.id),
+        _expanded: true,
+      };
+    } catch (e) {
+      console.log(`  failed to parse cached movie ${movieId}: ${e}`);
+    }
+  }
+}
+
 async function main() {
   fs.mkdirSync(CONFIG.outDir, { recursive: true });
 
@@ -591,6 +673,11 @@ async function main() {
     console.log(`  true distance: ${connectDistance} hops — within range, accepting this pair`);
 
     await fillInLeafActors(cache);
+
+    // Use any available on-disk TMDB cache to fill out actor/movie details we
+    // never fetched in this run. This allows alternate / longer valid paths
+    // to be recognized when the data exists in the persisted CACHE_DIR.
+    hydrateCacheFromDisk(cache);
 
     const { actors, movies } = trimCacheToVisited(cache);
     console.log(
