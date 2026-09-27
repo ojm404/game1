@@ -154,7 +154,7 @@ const CONFIG = {
   // large or too small — check the actual byte size of out/puzzle-data.js
   // after a run and adjust from there. With the new popularity filters,
   // 600 is now a conservative upper bound; try 400-500 first.
-  maxDiscoveredMovies: 600,
+  maxDiscoveredMovies: 2000,
 
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
@@ -164,7 +164,7 @@ const CONFIG = {
   // not just the first), so this is a TOTAL budget shared across every
   // round, not a single pass — though maxDiscoveredMovies will usually
   // stop closure well before this budget is ever fully spent.
-  maxLeafExpansions: 400,
+  maxLeafExpansions: 600,
 
   // Generate exactly one valid pair per day.
   targetValidPairs: 1,
