@@ -79,7 +79,6 @@ const CONFIG = {
     "Kurt Russell",
     "James Spader",
     "Jennifer Lawrence",
-    "James Corden",
     "Chris Pine",
     "Simon Pegg",
     "Zendaya",
