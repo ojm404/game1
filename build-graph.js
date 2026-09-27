@@ -94,7 +94,7 @@ const CONFIG = {
   // Well-known actor names to seed pair-finding for the game. Add more —
   // the wider this pool, the better the variety of start/end pairs.
   seedActorNames: [
-    "Tom Hanks",
+"Tom Hanks",
     "Meryl Streep",
     "Denzel Washington",
     "Julia Roberts",
@@ -129,8 +129,8 @@ const CONFIG = {
     "Penelope Cruz",
     "Javier Bardem",
     "Daniel Craig",
-    "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Scarlett Johansson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Sandra Bullock", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank"
+    "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine", "Ryan Gosling", "Ben Affleck", "Emma Watson"
   ],
 
   // Only keep pairs whose true shortest path is in this range — too close is
