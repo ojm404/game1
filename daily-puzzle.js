@@ -67,8 +67,8 @@ const CONFIG = {
   ],
 
   // A puzzle must have a true shortest path in this range to be accepted.
-  minPairDistance: 3,
-  maxPairDistance: 5,
+  minPairDistance: 4,
+  maxPairDistance: 6,
 
   // Hard ceiling on how many actors the bidirectional search will expand
   // before giving up on a pair and trying a different one. This is what
@@ -82,7 +82,7 @@ const CONFIG = {
   // would walk off the edge of what was ever fetched. Spending the full
   // budget regardless of how fast the direct connection is found gives
   // every puzzle the same real breadth to explore, not just the hard ones.
-  maxActorsExpanded: 600,
+  maxActorsExpanded: 400,
 
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
@@ -97,7 +97,7 @@ const CONFIG = {
   // small fraction of that larger pool ever gets real data. Watch the
   // "closure budget exhausted with N actor(s) still unexpanded" log line
   // after a run — if N is still large, raise this further.
-  maxLeafExpansions: 600,
+  maxLeafExpansions: 400,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
