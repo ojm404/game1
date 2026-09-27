@@ -128,7 +128,7 @@ const CONFIG = {
   // large or too small — check the actual byte size of out/puzzle-data.js
   // after a run and adjust from there. 2000 is a conservative starting
   // point, not a calculated ideal.
-  maxDiscoveredMovies: 2000,
+  maxDiscoveredMovies: 1500,
 
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
