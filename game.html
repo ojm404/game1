@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marvelless Six Degrees</title>
+  <style>
+    :root { color-scheme: dark; --stage:#431059; --panel:#b71a9f; --gold:#e7b24c; --muted:#f6c1ee; --red:#e07a6d; --green:#6f9f6d; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; padding:28px 16px 48px; background:var(--stage); color:#fff; font-family:system-ui,sans-serif; }
+    .wrap { width:100%; max-width:640px; margin:auto; }
+    h1 { margin:0; text-align:center; font-family:Georgia,serif; font-size:clamp(2rem,7vw,2.9rem); }
+    .sub { margin:6px 0 28px; color:var(--muted); text-align:center; }
+    .tickets,.stats { display:flex; gap:10px; align-items:center; margin-bottom:18px; }
+    .ticket,.chip,.filmstrip,.window { background:var(--panel); border:1px solid #000; border-radius:4px; }
+    .ticket { flex:1; padding:14px 10px; text-align:center; }
+    .ticket .label,.chip-label { color:var(--gold); font-size:.68rem; letter-spacing:.08em; }
+    .ticket .name { margin-top:4px; font-weight:600; }
+    .arrow { color:var(--muted); }
+    .chip { flex:1; padding:8px; text-align:center; }
+    .chip-value { font-size:1.1rem; font-weight:600; }
+    .filmstrip { height:116px; padding:16px; margin-bottom:18px; overflow:hidden; }
+    .empty { padding:20px 8px; color:var(--muted); text-align:center; font-size:.88rem; }
+    .frames { display:flex; gap:8px; align-items:center; height:100%; overflow-x:auto; }
+    .frame { flex:0 0 auto; min-width:108px; padding:10px 12px; background:var(--stage); border:1px solid #000; border-radius:2px; text-align:center; }
+    .frame .kind { color:var(--muted); font-size:.6rem; letter-spacing:.06em; }
+    .frame.actor .kind { color:var(--gold); }
+    .frame .nm { margin-top:3px; font-size:.82rem; }
+    .window { padding:14px; }
+    .hint { margin-bottom:8px; color:var(--muted); font-size:.78rem; }
+    form { display:flex; flex-wrap:wrap; gap:8px; }
+    input,button { min-height:40px; border-radius:3px; font:inherit; }
+    input { min-width:0; flex:1 1 140px; padding:9px 12px; color:#fff; background:var(--stage); border:1px solid #000; }
+    button { padding:0 18px; color:#241a08; background:var(--gold); border:0; font-weight:600; cursor:pointer; }
+    button:disabled,input:disabled { opacity:.55; cursor:not-allowed; }
+    .status { min-height:1.2em; margin-top:10px; font-size:.85rem; }
+    .status.err { color:var(--red); } .status.win { color:var(--green); }
+    .meta { margin-top:14px; color:var(--muted); font-size:.78rem; }
+    .share { margin-top:14px; padding-top:14px; border-top:1px dashed #000; }
+    .share-text { padding:10px 12px; white-space:pre-wrap; background:var(--stage); border:1px solid #000; }
+    @media(max-width:420px) { body{padding:16px 12px 32px}.tickets{flex-direction:column}.arrow{transform:rotate(90deg)} }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Marvelless Six Degrees</h1>
+    <div class="sub">Connect the two actors through their shared films. No MCU allowed.</div>
+
+    <div class="tickets">
+      <div class="ticket"><div class="label">START</div><div class="name" id="startName">—</div></div>
+      <div class="arrow">→</div>
+      <div class="ticket"><div class="label">FINISH</div><div class="name" id="endName">—</div></div>
+    </div>
+
+    <div class="stats">
+      <div class="chip"><div class="chip-label">GUESSES</div><div class="chip-value" id="guessValue">0 / 5</div></div>
+      <div class="chip"><div class="chip-label">TIME</div><div class="chip-value" id="timeValue">0:00</div></div>
+    </div>
+
+    <div class="filmstrip"><div class="empty" id="filmEmpty">No links connected yet — start typing below.</div><div class="frames" id="frames"></div></div>
+
+    <section class="window">
+      <div class="hint" id="hint">Loading today's puzzle…</div>
+      <form id="guessForm">
+        <input id="movieInput" list="movieOptions" autocomplete="off" placeholder="A film they were in…" disabled>
+        <datalist id="movieOptions"></datalist>
+        <input id="actorInput" autocomplete="off" placeholder="Who else was in it…" disabled>
+        <button type="submit" disabled>Connect</button>
+      </form>
+      <div class="status" id="status"></div>
+      <div class="meta" id="tally">0 links</div>
+      <div class="share" id="shareBlock" hidden><pre class="share-text" id="shareText"></pre><button type="button" id="copyResults">Copy results</button></div>
+    </section>
+  </main>
+
+  <script>
+    (function loadPuzzleData() {
+      const script = document.createElement("script");
+      const date = new Date().toISOString().slice(0, 10);
+      script.src = `https://cdn.jsdelivr.net/gh/ojm404/game1@main/puzzle-data.js?v=${date}`;
+      script.onload = () => window.__sixDegreesInit && window.__sixDegreesInit();
+      script.onerror = () => setStatus("Could not load today's puzzle. Try refreshing.", true);
+      document.head.appendChild(script);
+    })();
+
+    (() => {
+      "use strict";
+      const MAX_GUESSES = 5;
+      let actors, movies, actorNameSet, movieTitleSet;
+      let startId, endId, chain, guessesUsed, gameOver, startTime, timerInterval;
+      const aliases = {
+        "tim hortons swiss chalet":"timothée chalamet",
+        "benadryl cucumberpatch":"benedict cumberbatch",
+        "wooow":"owen wilson",
+        "alright alright alright":"matthew mcconaughey",
+        "rpattz":"robert pattinson"
+      };
+      const norm = value => String(value || "").trim().toLowerCase();
+      const el = id => document.getElementById(id);
+      function setStatus(message, error = false) { el("status").textContent = message; el("status").className = error ? "status err" : "status"; }
+      function formatTime(ms) { const seconds=Math.floor(ms/1000), minutes=Math.floor(seconds/60); return `${minutes}:${String(seconds%60).padStart(2,"0")}`; }
+      function updateTime() { el("timeValue").textContent = formatTime(Date.now()-startTime); }
+      function stopTimer() { clearInterval(timerInterval); }
+      function updateStats() { el("guessValue").textContent=`${guessesUsed} / ${MAX_GUESSES}`; }
+
+      function newPuzzle() {
+        // The current generator writes one pair directly as data.a/data.b.
+        // Do not read data.pairs here: that property no longer exists.
+        chain = [{type:"actor", id:startId}];
+        guessesUsed = 0; gameOver = false; setStatus("");
+        el("startName").textContent = actors[startId].name;
+        el("endName").textContent = actors[endId].name;
+        el("movieInput").disabled = false; el("actorInput").disabled = false; document.querySelector("button[type=submit]").disabled = false;
+        stopTimer(); startTime=Date.now(); updateTime(); timerInterval=setInterval(updateTime,1000); updateStats(); render();
+      }
+      function lastActor() { return chain[chain.length-1]; }
+      function refreshMovieOptions() {
+        const list=el("movieOptions"); list.innerHTML="";
+        const actor=actors[lastActor().id];
+        (actor.movies || []).filter(id=>movies[id]).forEach(id=>{ const option=document.createElement("option"); option.value=movies[id].title; list.appendChild(option); });
+      }
+      function render() {
+        const frames=el("frames"); frames.innerHTML=""; el("filmEmpty").style.display=chain.length===1?"block":"none";
+        chain.forEach((node,index)=>{ if(index){ const link=document.createElement("span"); link.textContent="⟶"; frames.appendChild(link); } const frame=document.createElement("div"); frame.className=`frame ${node.type}`; frame.innerHTML=`<div class="kind">${node.type === "actor" ? "ACTOR" : "FILM"}</div><div class="nm"></div>`; frame.querySelector(".nm").textContent=node.type === "actor" ? actors[node.id].name : movies[node.id].title; frames.appendChild(frame); });
+        frames.scrollLeft=frames.scrollWidth;
+        const actor=actors[lastActor().id]; el("hint").innerHTML=`Name a film <b>${actor.name}</b> was in, and who they shared it with.`; refreshMovieOptions(); const links=(chain.length-1)/2; el("tally").textContent=`${links} ${links===1?"link":"links"}`;
+      }
+      function fail(message) { setStatus(message,true); }
+      function disableInputs() { el("movieInput").disabled=true; el("actorInput").disabled=true; document.querySelector("button[type=submit]").disabled=true; }
+      function finish(won) { gameOver=true; stopTimer(); disableInputs(); setStatus(won ? `Connected in ${guessesUsed} guesses, ${formatTime(Date.now()-startTime)}. Nicely done.` : `Out of guesses. ${actors[startId].name} and ${actors[endId].name} stay unconnected today.`, !won); const result=won?`${guessesUsed}/${MAX_GUESSES} guesses — ${formatTime(Date.now()-startTime)}`:`X/${MAX_GUESSES} — didn't connect (${formatTime(Date.now()-startTime)})`; el("shareText").textContent=`Marvelless Six Degrees\n${actors[startId].name} → ${actors[endId].name}\n${result}`; el("shareBlock").hidden=false; }
+      function submitGuess(movieRaw, actorRaw) {
+        if(gameOver) return;
+        const movieGuess=norm(movieRaw), actorGuess=aliases[norm(actorRaw)] || norm(actorRaw); if(!movieGuess || !actorGuess) return fail("Enter both a film and who was in it.");
+        const actor=actors[lastActor().id]; const movieId=(actor.movies||[]).find(id=>movies[id] && norm(movies[id].title)===movieGuess);
+        if(movieId===undefined) return fail(movieTitleSet.has(movieGuess)?`${actor.name} wasn't in that one, or you're too far off the path. Try again.`:"That film doesn't match anything in this puzzle — check the spelling, or try a different path.");
+        const nextId=(movies[movieId].cast||[]).find(id=>actors[id] && norm(actors[id].name)===actorGuess);
+        if(nextId===undefined) return fail(actorNameSet.has(actorGuess)?`They weren't in ${movies[movieId].title}. Check spelling, or try again.`:"That name doesn't match anything in this puzzle — check the spelling.");
+        chain.push({type:"movie",id:movieId},{type:"actor",id:nextId}); guessesUsed++; updateStats(); render();
+        if(nextId===endId) finish(true); else if(guessesUsed>=MAX_GUESSES) finish(false); else setStatus("");
+      }
+      el("guessForm").addEventListener("submit", event => { event.preventDefault(); submitGuess(el("movieInput").value,el("actorInput").value); el("movieInput").value=""; el("actorInput").value=""; el("movieInput").focus(); });
+      el("copyResults").addEventListener("click",()=>navigator.clipboard?.writeText(el("shareText").textContent));
+      function init() {
+        const data=window.SIX_DEGREES_DATA; if(!data) return setStatus("Could not load today's puzzle. Try refreshing.",true);
+        actors=data.actors; movies=data.movies;
+        // IMPORTANT: this is the daily-puzzle.js format.
+        startId=String(data.a); endId=String(data.b);
+        actorNameSet=new Set(Object.values(actors).map(actor=>norm(actor.name))); movieTitleSet=new Set(Object.values(movies).map(movie=>norm(movie.title)));
+        if(!actors[startId] || !actors[endId]) return setStatus("Today's puzzle data is invalid. Try refreshing.",true);
+        newPuzzle();
+      }
+      window.__sixDegreesInit=init;
+      if(window.SIX_DEGREES_DATA) init();
+    })();
+  </script>
+</body>
+</html>
