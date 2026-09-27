@@ -47,8 +47,15 @@ const CONFIG = {
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
 
   // Keep these in sync with build-graph.js's CONFIG of the same names.
-  marvelCompanyIds: new Set([420]),
+  // Exclude specific Marvel-owned entities without blacklisting the whole Fox/20th Century studio.
+  marvelCompanyIds: new Set([420, 7505]),
   excludedKeywordIds: new Set([180547]), // "Marvel Cinematic Universe (MCU)"
+
+  // TMDB list 27741 is the X-Men film series list.
+  // Use exact movie IDs from that list to avoid removing unrelated Fox/20th Century titles.
+  excludedMovieIds: new Set([
+    // populated dynamically at runtime by loadExcludedMovieIds()
+  ]),
 
   // Filter to exclude unpopular, lesser-known, and unreleased films.
   // These thresholds dramatically reduce puzzle-data.js file size by
@@ -201,6 +208,28 @@ function cachePathFor(urlPath) {
   return path.join(CACHE_DIR, `${safe}.json`);
 }
 
+async function loadExcludedMovieIds() {
+  const listUrl = "/list/27741?language=en-US";
+  const file = cachePathFor(listUrl);
+  let data;
+
+  if (fs.existsSync(file)) {
+    data = JSON.parse(fs.readFileSync(file, "utf8"));
+  } else {
+    const url = `${CONFIG.baseUrl}${listUrl}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${TMDB_KEY}` } });
+    if (!res.ok) {
+      throw new Error(`TMDB X-Men list request failed (${res.status}): ${url}`);
+    }
+    data = await res.json();
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data));
+  }
+
+  const ids = (data.items || []).map((item) => item.id);
+  for (const id of ids) CONFIG.excludedMovieIds.add(id);
+}
+
 async function tmdb(urlPath, attempt = 1) {
   // Checked before the limiter, not inside it — a cache hit is a local
   // disk read, so it shouldn't cost a rate-limit slot or a pacing pause.
@@ -252,6 +281,8 @@ async function tmdb(urlPath, attempt = 1) {
 // ---------------------------------------------------------------------------
 
 function isMarvelMovie(movieDetails) {
+  if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
+
   const companyIds = (movieDetails.production_companies || []).map((c) => c.id);
   if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
   const keywordIds = ((movieDetails.keywords && movieDetails.keywords.keywords) || []).map(
@@ -600,6 +631,7 @@ async function fillInLeafActors(cache) {
 
 async function main() {
   fs.mkdirSync(CONFIG.outDir, { recursive: true });
+  await loadExcludedMovieIds();
 
   let validPair = null;
 
