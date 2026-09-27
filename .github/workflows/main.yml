@@ -48,7 +48,7 @@ jobs:
         run: node daily-puzzle.js
 
       - name: Move output to repo root
-        run: mv out/puzzle-data.js
+        run: mv out/puzzle-data.js daily-puzzle.js
         
       - name: Commit and push if it changed
         run: |
