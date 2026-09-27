@@ -63,41 +63,55 @@ const CONFIG = {
     "Simon Pegg", "Zendaya", "Idris Elba", "Tom Cruise", "Penelope Cruz",
     "Javier Bardem", "Daniel Craig", "Kirsten Dunst", "Kristen Stewart",
     "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans",
-    "Chris Pratt", "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Sandra Bullock", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank"
+    "Chris Pratt",
   ],
 
-  // A puzzle must have a true shortest path in this range to be accepted.
-  minPairDistance: 4,
-  maxPairDistance: 6,
+  // A puzzle's TRUE shortest path must fall in this range or main() will
+  // reject the pair and try a different one — this is what actually
+  // controls difficulty. Raise minPairDistance to eliminate "obvious"
+  // puzzles (two actors who happen to share one famous blockbuster
+  // connect in 1 hop regardless of how deep/rich the rest of the graph
+  // is — the game accepts ANY real connection, so an easy one existing
+  // at all is what makes a puzzle feel trivial). maxPairDistance should
+  // stay at or below MAX_GUESSES in game.html (currently 5) — anything
+  // longer literally can't be won within the guess limit.
+  minPairDistance: 3,
+  maxPairDistance: 5,
 
   // Hard ceiling on how many actors the bidirectional search will expand
   // before giving up on a pair and trying a different one. This is what
   // keeps a single day's run inside a reasonable number of API calls —
   // without it, a pair of very popular actors could pull in tens of
-  // thousands of requests before connecting. The search always spends
-  // this whole budget now, rather than winding down shortly after the two
-  // actors connect — a puzzle with a short true answer used to stop with
-  // very little real depth built around it, so a player deliberately
-  // trying a longer (but still valid, still within the guess limit) chain
-  // would walk off the edge of what was ever fetched. Spending the full
-  // budget regardless of how fast the direct connection is found gives
-  // every puzzle the same real breadth to explore, not just the hard ones.
-  maxActorsExpanded: 400,
+  // thousands of requests before connecting. This is now a secondary
+  // safety ceiling, not the primary control — maxDiscoveredMovies below
+  // is what actually governs how big the search grows, because spending
+  // this whole budget unconditionally turned out to produce catastrophic
+  // graph sizes (one real run: 600 expansions here plus 600 more in
+  // closure produced 173,298 actors and 32,248 movies — tens of MB,
+  // likely over jsDelivr's 50MB hard limit for files served from GitHub,
+  // which is why the live puzzle silently stopped updating even though
+  // the workflow itself succeeded).
+  maxActorsExpanded: 600,
+
+  // The actual governing limit: stops the main search AND the closure
+  // pass (they share this one ceiling) once this many unique movies have
+  // been discovered, regardless of how much of maxActorsExpanded or
+  // maxLeafExpansions is left. This is what the shipped file size scales
+  // with directly, so it's the number to tune if a run comes out too
+  // large or too small — check the actual byte size of out/puzzle-data.js
+  // after a run and adjust from there. 2000 is a conservative starting
+  // point, not a calculated ideal.
+  maxDiscoveredMovies: 2000,
 
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
   // filmography was never fetched, which means every guess made FROM that
-  // node would fail even when correct. fillInLeafActors() now closes this
+  // node would fail even when correct. fillInLeafActors() closes this
   // iteratively (each round of newly-discovered actors gets expanded too,
   // not just the first), so this is a TOTAL budget shared across every
-  // round, not a single pass. Now that the main search always spends its
-  // full maxActorsExpanded budget (rather than stopping early), it
-  // discovers a much larger pool of never-personally-expanded co-stars
-  // than before — so this needs to scale up to match, or an increasingly
-  // small fraction of that larger pool ever gets real data. Watch the
-  // "closure budget exhausted with N actor(s) still unexpanded" log line
-  // after a run — if N is still large, raise this further.
-  maxLeafExpansions: 400,
+  // round, not a single pass — though maxDiscoveredMovies will usually
+  // stop closure well before this budget is ever fully spent.
+  maxLeafExpansions: 600,
 
   // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
@@ -305,11 +319,16 @@ async function expandMovie(movieId, cache) {
  * connection is 2 hops or 5, the same budget now gets spent building real
  * breadth either way.
  *
- * Returns { found: bool, cache } — cache holds every actor/movie visited,
- * which becomes the puzzle's shipped graph regardless of outcome. `found`
- * just records whether a real connection exists at all, for main() to
- * decide whether this pair is usable — it no longer affects how much
- * gets expanded.
+ * Also tracks connectDistance: the round number at which the two
+ * frontiers first touch. Since each round advances exactly one side by
+ * one hop, this round count IS the true shortest-path distance between
+ * the pair — exactly what main() needs to reject pairs that connect too
+ * easily (an obvious shared blockbuster) or too distantly (unwinnable
+ * within the 5-guess limit).
+ *
+ * Returns { found, connectDistance, cache } — cache holds every
+ * actor/movie visited, which becomes the puzzle's shipped graph
+ * regardless of outcome.
  */
 async function bidirectionalSearch(startId, endId, cache) {
   let frontA = new Set([startId]);
@@ -318,11 +337,14 @@ async function bidirectionalSearch(startId, endId, cache) {
   const visitedB = new Set([endId]);
   let actorsExpanded = 0;
   let found = false;
+  let connectDistance = null;
+  let roundsElapsed = 0;
 
   cache.actors[startId] = cache.actors[startId] || { name: null, movies: [] };
   cache.actors[endId] = cache.actors[endId] || { name: null, movies: [] };
 
   while (frontA.size > 0 && frontB.size > 0) {
+    roundsElapsed += 1;
     const expandingA = frontA.size <= frontB.size;
     const frontier = expandingA ? frontA : frontB;
     const visitedSame = expandingA ? visitedA : visitedB;
@@ -332,7 +354,13 @@ async function bidirectionalSearch(startId, endId, cache) {
 
     for (const actorId of frontier) {
       if (actorsExpanded >= CONFIG.maxActorsExpanded) {
-        return { found, cache };
+        return { found, connectDistance, cache };
+      }
+      if (Object.keys(cache.movies).length >= CONFIG.maxDiscoveredMovies) {
+        console.log(
+          `  hit maxDiscoveredMovies (${CONFIG.maxDiscoveredMovies}) during main search — stopping here`
+        );
+        return { found, connectDistance, cache };
       }
       actorsExpanded += 1;
 
@@ -342,8 +370,9 @@ async function bidirectionalSearch(startId, endId, cache) {
         if (movie._excluded) continue;
 
         for (const coStarId of movie.cast) {
-          if (visitedOther.has(coStarId)) {
-            found = true; // a real connection exists — keep expanding regardless
+          if (visitedOther.has(coStarId) && !found) {
+            found = true;
+            connectDistance = roundsElapsed; // first-touch round = true distance
           }
           if (!visitedSame.has(coStarId)) {
             visitedSame.add(coStarId);
@@ -357,7 +386,7 @@ async function bidirectionalSearch(startId, endId, cache) {
     else frontB = next;
   }
 
-  return { found, cache };
+  return { found, connectDistance, cache };
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +447,13 @@ async function fillInLeafActors(cache) {
   let totalExpanded = 0;
 
   while (totalExpanded < CONFIG.maxLeafExpansions) {
+    if (Object.keys(cache.movies).length >= CONFIG.maxDiscoveredMovies) {
+      console.log(
+        `  hit maxDiscoveredMovies (${CONFIG.maxDiscoveredMovies}) during closure — stopping here`
+      );
+      break;
+    }
+
     const unexpanded = Object.keys(cache.actors).filter(
       (id) => !cache.actors[id]._expanded
     );
@@ -448,7 +484,7 @@ async function fillInLeafActors(cache) {
   ).length;
   if (stillUnexpanded > 0) {
     console.log(
-      `  closure budget exhausted with ${stillUnexpanded} actor(s) still unexpanded — ` +
+      `  closure ended with ${stillUnexpanded} actor(s) still unexpanded — ` +
         `those specific nodes may reject correct guesses if a player reaches them`
     );
   }
@@ -471,12 +507,30 @@ async function main() {
     cache.actors[idA] = { name: nameA, movies: [] };
     cache.actors[idB] = { name: nameB, movies: [] };
 
-    const { found } = await bidirectionalSearch(idA, idB, cache);
+    const { found, connectDistance } = await bidirectionalSearch(idA, idB, cache);
 
     if (!found) {
       console.log("  no connection found within the search budget, trying a different pair");
       continue;
     }
+
+    if (connectDistance < CONFIG.minPairDistance) {
+      console.log(
+        `  connects too easily (${connectDistance} hop${connectDistance === 1 ? "" : "s"}, ` +
+          `need at least ${CONFIG.minPairDistance}) — trying a different pair`
+      );
+      continue;
+    }
+
+    if (connectDistance > CONFIG.maxPairDistance) {
+      console.log(
+        `  connects too distantly (${connectDistance} hops, ` +
+          `max ${CONFIG.maxPairDistance}) — trying a different pair`
+      );
+      continue;
+    }
+
+    console.log(`  true distance: ${connectDistance} hops — within range, accepting this pair`);
 
     await fillInLeafActors(cache);
 
@@ -499,7 +553,14 @@ async function main() {
       `window.SIX_DEGREES_DATA = ${JSON.stringify(payload)};\n`;
 
     fs.writeFileSync(path.join(CONFIG.outDir, "puzzle-data.js"), js);
-    console.log(`\nWrote out/puzzle-data.js (${nameA} <-> ${nameB}).`);
+    const fileSizeMB = (fs.statSync(path.join(CONFIG.outDir, "puzzle-data.js")).size / (1024 * 1024)).toFixed(2);
+    console.log(`\nWrote out/puzzle-data.js (${nameA} <-> ${nameB}), ${fileSizeMB} MB.`);
+    if (fileSizeMB > 10) {
+      console.log(
+        `  WARNING: ${fileSizeMB} MB is large for a file served via jsDelivr (hard limit 50MB) ` +
+          `and for a browser to download/parse on page load. Consider lowering maxDiscoveredMovies.`
+      );
+    }
     return;
   }
 
