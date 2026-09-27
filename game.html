@@ -147,12 +147,36 @@
       function submitGuess(movieRaw, actorRaw) {
         if(gameOver) return;
         const movieGuess=norm(movieRaw), actorGuess=aliases[norm(actorRaw)] || norm(actorRaw); if(!movieGuess || !actorGuess) return fail("Enter both a film and who was in it.");
-        const actor=actors[lastActor().id]; const movieId=(actor.movies||[]).find(id=>movies[id] && norm(movies[id].title)===movieGuess);
-        if(movieId===undefined) return fail(movieTitleSet.has(movieGuess)?`${actor.name} wasn't in that one, or you're too far off the path. Try again.`:"That film doesn't match anything in this puzzle — check the spelling, or try a different path.");
-        const nextId=(movies[movieId].cast||[]).find(id=>actors[id] && norm(actors[id].name)===actorGuess);
+
+        const actorNode = lastActor();
+        const actor = actors[actorNode.id];
+
+        // Try to find the movie in the current actor's filmography first. If that
+        // actor's filmography is missing (unexpanded node), fall back to searching
+        // the global movies list for a matching title that includes the current actor
+        // in its cast. This prevents dead-ends when some nodes in the shipped
+        // puzzle data lack full filmography arrays.
+        let movieId = (actor && actor.movies ? (actor.movies || []).find(id => movies[id] && norm(movies[id].title) === movieGuess) : undefined);
+        if (movieId === undefined) {
+          for (const id of Object.keys(movies)) {
+            const m = movies[id];
+            if (!m || norm(m.title) !== movieGuess) continue;
+            const cast = m.cast || [];
+            // compare ids as strings to avoid number/string mismatch
+            if (cast.some(cid => String(cid) === String(actorNode.id))) {
+              movieId = id;
+              break;
+            }
+          }
+        }
+
+        if(movieId===undefined) return fail(movieTitleSet.has(movieGuess)?`${actor ? actor.name : 'They'} wasn't in that one, or you're too far off the path. Try again.`:"That film doesn't match anything in this puzzle — check the spelling, or try a different path.");
+
+        const nextId = (movies[movieId].cast||[]).find(id=>actors[id] && norm(actors[id].name)===actorGuess);
         if(nextId===undefined) return fail(actorNameSet.has(actorGuess)?`They weren't in ${movies[movieId].title}. Check spelling, or try again.`:"That name doesn't match anything in this puzzle — check the spelling.");
+
         chain.push({type:"movie",id:movieId},{type:"actor",id:nextId}); guessesUsed++; updateStats(); render();
-        if(nextId===endId) finish(true); else if(guessesUsed>=MAX_GUESSES) finish(false); else setStatus("");
+        if(String(nextId)===String(endId)) finish(true); else if(guessesUsed>=MAX_GUESSES) finish(false); else setStatus("");
       }
       el("guessForm").addEventListener("submit", event => { event.preventDefault(); submitGuess(el("movieInput").value,el("actorInput").value); el("movieInput").value=""; el("actorInput").value=""; el("movieInput").focus(); });
       el("copyResults").addEventListener("click",()=>navigator.clipboard?.writeText(el("shareText").textContent));
