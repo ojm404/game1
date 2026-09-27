@@ -4,11 +4,11 @@ name: Generate daily puzzle
 # (useful for testing without waiting for the schedule).
 on:
   schedule:
-    # 06:00 UTC every day. Cron is always UTC on GitHub Actions — adjust
+    # 05:00 UTC every day. Cron is always UTC on GitHub Actions — adjust
     # this number for your own timezone if you want the puzzle to flip
     # over at a specific local time (e.g. midnight Eastern in winter is
     # 05:00 UTC).
-    - cron: "0 6 * * *"
+    - cron: "0 5 * * *"
   workflow_dispatch: {}
 
 permissions:
