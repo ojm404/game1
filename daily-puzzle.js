@@ -88,7 +88,7 @@ const CONFIG = {
     "Javier Bardem",
     "Daniel Craig",
     "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael C[...]"
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael C[...]",
   ],
 
   // A puzzle's TRUE shortest path must fall in this range or main() will
@@ -551,17 +551,24 @@ async function fillInLeafActors(cache) {
 // ---------------------------------------------------------------------------
 // New: hydrate cache from on-disk TMDB JSON files so previously-fetched
 // actor/movie details can be re-used to allow alternate/longer paths.
+// This is intentionally bounded to keep the final puzzle under jsDelivr's
+// file-size limits.
 // ---------------------------------------------------------------------------
 
 function hydrateCacheFromDisk(cache) {
-  // Try to fill missing actor movie lists and movie details from files already
-  // saved in CACHE_DIR (no network calls). This supplements the per-run cache
-  // using previous runs' TMDB responses so alternate/longer paths can be
-  // recognized even if they weren't expanded live this run.
+  const currentMovieCount = Object.keys(cache.movies).length;
+  let remainingMoviesAllowed = Math.max(0, CONFIG.maxDiscoveredMovies - currentMovieCount);
 
-  // Hydrate actors' credits from disk cache if present
+  if (remainingMoviesAllowed === 0) {
+    console.log("  hydration skipped: already at maxDiscoveredMovies");
+    return;
+  }
+
+  const maxActorsToHydrate = 200;
+  let hydratedActors = 0;
+
   for (const actorId of Object.keys(cache.actors)) {
-    // If already expanded in this run, skip
+    if (hydratedActors >= maxActorsToHydrate) break;
     if (cache.actors[actorId]._expanded) continue;
 
     const creditsPath = `/person/${actorId}/movie_credits?language=en-US`;
@@ -576,24 +583,22 @@ function hydrateCacheFromDisk(cache) {
 
       cache.actors[actorId] = cache.actors[actorId] || { name: null, movies: [] };
       cache.actors[actorId].movies = movieIds;
-      // Mark expanded because we used the cached filmography
       cache.actors[actorId]._expanded = true;
-      // If the person record in the cached response included a name, use it
       if (!cache.actors[actorId].name && credits.name) cache.actors[actorId].name = credits.name;
+      hydratedActors += 1;
     } catch (e) {
-      // If the cached file is corrupt, ignore and continue
       console.log(`  failed to parse cached credits for person ${actorId}: ${e}`);
     }
   }
 
-  // Build set of movie ids referenced by (now hydrated) actors
   const referencedMovieIds = new Set();
   for (const a of Object.values(cache.actors)) {
     for (const mid of (a.movies || [])) referencedMovieIds.add(Number(mid));
   }
 
-  // Hydrate movie details from disk cache for any referenced movie
-  for (const movieId of Array.from(referencedMovieIds)) {
+  const movieIdsList = Array.from(referencedMovieIds);
+  for (const movieId of movieIdsList) {
+    if (remainingMoviesAllowed <= 0) break;
     if (cache.movies[movieId] && cache.movies[movieId]._expanded) continue;
 
     const moviePath = `/movie/${movieId}?language=en-US&append_to_response=credits,keywords`;
@@ -605,6 +610,7 @@ function hydrateCacheFromDisk(cache) {
 
       if (isMarvelMovie(details) || isNonFictionMovie(details)) {
         cache.movies[movieId] = { title: details.title, year: null, cast: [], _excluded: true, _expanded: true };
+        remainingMoviesAllowed -= 1;
         continue;
       }
 
@@ -624,10 +630,17 @@ function hydrateCacheFromDisk(cache) {
         cast: cast.map((c) => c.id),
         _expanded: true,
       };
+      remainingMoviesAllowed -= 1;
     } catch (e) {
       console.log(`  failed to parse cached movie ${movieId}: ${e}`);
     }
   }
+
+  console.log(
+    `  hydration applied: ${hydratedActors} actor(s) and ` +
+      `${Object.keys(cache.movies).length - currentMovieCount} movie(s) ` +
+      `(limited by remaining maxDiscoveredMovies budget)`
+  );
 }
 
 async function main() {
@@ -676,7 +689,9 @@ async function main() {
 
     // Use any available on-disk TMDB cache to fill out actor/movie details we
     // never fetched in this run. This allows alternate / longer valid paths
-    // to be recognized when the data exists in the persisted CACHE_DIR.
+    // to be recognized when the data exists in the persisted CACHE_DIR, while
+    // staying within the graph budget that keeps puzzle-data.js under the CDN
+    // size cap.
     hydrateCacheFromDisk(cache);
 
     const { actors, movies } = trimCacheToVisited(cache);
