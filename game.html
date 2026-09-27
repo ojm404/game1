@@ -116,14 +116,30 @@
       function lastActor() { return chain[chain.length-1]; }
       function refreshMovieOptions() {
         const list=el("movieOptions"); list.innerHTML="";
-        const actor=actors[lastActor().id];
+        const actor = actors[lastActor().id];
+        if (!actor || !actor.movies) return; // guard if actor data isn't available yet
         (actor.movies || []).filter(id=>movies[id]).forEach(id=>{ const option=document.createElement("option"); option.value=movies[id].title; list.appendChild(option); });
       }
       function render() {
         const frames=el("frames"); frames.innerHTML=""; el("filmEmpty").style.display=chain.length===1?"block":"none";
-        chain.forEach((node,index)=>{ if(index){ const link=document.createElement("span"); link.textContent="⟶"; frames.appendChild(link); } const frame=document.createElement("div"); frame.className=`frame ${node.type}`; frame.innerHTML=`<div class="kind">${node.type === "actor" ? "ACTOR" : "FILM"}</div><div class="nm"></div>`; frame.querySelector(".nm").textContent=node.type === "actor" ? actors[node.id].name : movies[node.id].title; frames.appendChild(frame); });
+        chain.forEach((node,index)=>{
+          if(index){ const link=document.createElement("span"); link.textContent="⟶"; frames.appendChild(link); }
+          const frame=document.createElement("div"); frame.className=`frame ${node.type}`;
+          frame.innerHTML=`<div class="kind">${node.type === "actor" ? "ACTOR" : "FILM"}</div><div class="nm"></div>`;
+          const nmEl = frame.querySelector(".nm");
+          if (node.type === "actor") {
+            const actorData = actors[node.id];
+            nmEl.textContent = actorData ? actorData.name : "(unknown actor)";
+          } else {
+            const movieData = movies[node.id];
+            nmEl.textContent = movieData ? movieData.title : "(unknown film)";
+          }
+          frames.appendChild(frame);
+        });
         frames.scrollLeft=frames.scrollWidth;
-        const actor=actors[lastActor().id]; el("hint").innerHTML=`Name a film <b>${actor.name}</b> was in, and who they shared it with.`; refreshMovieOptions(); const links=(chain.length-1)/2; el("tally").textContent=`${links} ${links===1?"link":"links"}`;
+        const actor = actors[lastActor().id];
+        el("hint").innerHTML=`Name a film <b>${actor ? actor.name : "(unknown)"}</b> was in, and who they shared it with.`;
+        refreshMovieOptions(); const links=(chain.length-1)/2; el("tally").textContent=`${links} ${links===1?"link":"links"}`;
       }
       function fail(message) { setStatus(message,true); }
       function disableInputs() { el("movieInput").disabled=true; el("actorInput").disabled=true; document.querySelector("button[type=submit]").disabled=true; }
