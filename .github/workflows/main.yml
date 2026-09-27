@@ -4,10 +4,10 @@ name: Generate daily puzzle
 # (useful for testing without waiting for the schedule).
 on:
   schedule:
-    # 05:00 UTC every day. Cron is always UTC on GitHub Actions — adjust
-    # this number for your own timezone if you want the puzzle to flip
-    # over at a specific local time (e.g. midnight Eastern in winter is
-    # 05:00 UTC).
+    # 05:00 UTC every day — set to match what's actually running live.
+    # Cron is always UTC on GitHub Actions regardless of this comment's
+    # wording; adjust the number itself if you want a different local
+    # flip-over time.
     - cron: "0 5 * * *"
   workflow_dispatch: {}
 
@@ -82,3 +82,14 @@ jobs:
 
           echo "Failed to push after 5 attempts."
           exit 1
+
+      - name: Purge jsDelivr cache for puzzle-data.js
+        run: |
+          # jsDelivr's edge cache for a moving branch ref like @main isn't
+          # on a fixed, predictable schedule — it can update in minutes or
+          # lag noticeably longer, with no guaranteed window either way.
+          # Hitting their purge endpoint here makes propagation immediate
+          # and deterministic instead of leaving it to chance. Harmless to
+          # run even when nothing changed above (a no-op push).
+          curl -s "https://purge.jsdelivr.net/gh/${{ github.repository }}@main/puzzle-data.js"
+          echo "Requested jsDelivr purge for ${{ github.repository }}@main/puzzle-data.js"
