@@ -88,7 +88,7 @@ const CONFIG = {
     "Javier Bardem",
     "Daniel Craig",
     "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine", "Ryan Gosling", "Ben Affleck", "Emma Watson"
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Micha[...]
   ],
 
   // A puzzle's TRUE shortest path must fall in this range or main() will
@@ -423,6 +423,34 @@ function pickTwoRandom(list) {
   return [shuffled[0], shuffled[1]];
 }
 
+function buildDistractorMap(actors, movies) {
+  const neighborIds = {};
+  for (const actorId of Object.keys(actors)) {
+    neighborIds[actorId] = new Set();
+  }
+
+  for (const movie of Object.values(movies)) {
+    if (!movie || !Array.isArray(movie.cast)) continue;
+    const cast = movie.cast;
+    for (const actorId of cast) {
+      for (const coStarId of cast) {
+        if (actorId !== coStarId) {
+          neighborIds[String(actorId)] = neighborIds[String(actorId)] || new Set();
+          neighborIds[String(actorId)].add(Number(coStarId));
+        }
+      }
+    }
+  }
+
+  const distractorMap = {};
+  for (const [actorId, neighbors] of Object.entries(neighborIds)) {
+    distractorMap[actorId] = Array.from(neighbors)
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 6);
+  }
+  return distractorMap;
+}
+
 function trimCacheToVisited(cache) {
   // Build the surviving movies first — this is what actors' movie lists
   // need to be filtered against below, since an actor's raw credit list
@@ -443,6 +471,11 @@ function trimCacheToVisited(cache) {
       survivingMovieIds.has(movieId)
     );
     actors[id] = { name: a.name, movies: survivingMovies };
+  }
+
+  const distractors = buildDistractorMap(actors, movies);
+  for (const [id, actor] of Object.entries(actors)) {
+    actor.distractors = distractors[id] || [];
   }
 
   return { actors, movies };
