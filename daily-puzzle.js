@@ -50,6 +50,13 @@ const CONFIG = {
   marvelCompanyIds: new Set([420]),
   excludedKeywordIds: new Set([180547]), // "Marvel Cinematic Universe (MCU)"
 
+  // Filter to exclude unpopular, lesser-known, and unreleased films.
+  // These thresholds dramatically reduce puzzle-data.js file size by
+  // preventing obscure titles from bloating the actor co-star network.
+  minPopularity: 5,           // TMDB popularity score (0-1000+, default ~10 for avg theatrical)
+  minVoteCount: 50,           // Minimum # of user votes (prevents obscure/barely-reviewed films)
+  allowUnreleasedMovies: false, // Set to true to include films with no release_date
+
   // Pool to pick today's two actors from. Same list you're using in
   // build-graph.js's seedActorNames works fine here.
   seedActorNames: [
@@ -135,8 +142,9 @@ const CONFIG = {
   // closure produced 173,298 actors and 32,248 movies — tens of MB,
   // likely over jsDelivr's 50MB hard limit for files served from GitHub,
   // which is why the live puzzle silently stopped updating even though
-  // the workflow itself succeeded).
-  maxActorsExpanded: 600,
+  // the workflow itself succeeded). The new popularity/voteCount filters
+  // above reduce graph expansion significantly, so this can now be lower.
+  maxActorsExpanded: 400,
 
   // The actual governing limit: stops the main search AND the closure
   // pass (they share this one ceiling) once this many unique movies have
@@ -144,9 +152,9 @@ const CONFIG = {
   // maxLeafExpansions is left. This is what the shipped file size scales
   // with directly, so it's the number to tune if a run comes out too
   // large or too small — check the actual byte size of out/puzzle-data.js
-  // after a run and adjust from there. 2000 is a conservative starting
-  // point, not a calculated ideal.
-  maxDiscoveredMovies: 1500,
+  // after a run and adjust from there. With the new popularity filters,
+  // 600 is now a conservative upper bound; try 400-500 first.
+  maxDiscoveredMovies: 600,
 
   // After the search connects the two actors, some nodes in the discovered
   // graph were only ever seen as someone else's co-star — their own
@@ -156,7 +164,7 @@ const CONFIG = {
   // not just the first), so this is a TOTAL budget shared across every
   // round, not a single pass — though maxDiscoveredMovies will usually
   // stop closure well before this budget is ever fully spent.
-  maxLeafExpansions: 600,
+  maxLeafExpansions: 400,
 
   // Generate exactly one valid pair per day.
   targetValidPairs: 1,
@@ -257,6 +265,25 @@ function isNonFictionMovie(movieDetails) {
   return genreIds.some((id) => CONFIG.excludedGenreIds.has(id));
 }
 
+function isUnpopularOrUnreleasedMovie(movieDetails) {
+  // Exclude unreleased movies (no release_date)
+  if (!CONFIG.allowUnreleasedMovies && !movieDetails.release_date) {
+    return true;
+  }
+
+  // Exclude very obscure movies (low popularity)
+  if (movieDetails.popularity && movieDetails.popularity < CONFIG.minPopularity) {
+    return true;
+  }
+
+  // Exclude barely-reviewed movies (very few votes)
+  if (movieDetails.vote_count && movieDetails.vote_count < CONFIG.minVoteCount) {
+    return true;
+  }
+
+  return false;
+}
+
 function isFictionalCastCredit(castMember) {
   const character = castMember.character || "";
   if (!character.trim()) return false;
@@ -332,7 +359,7 @@ async function expandMovie(movieId, cache) {
     throw err; // anything else (network failure, retries exhausted) is still fatal
   }
 
-  if (isMarvelMovie(details) || isNonFictionMovie(details)) {
+  if (isMarvelMovie(details) || isNonFictionMovie(details) || isUnpopularOrUnreleasedMovie(details)) {
     cache.movies[movieId] = { title: details.title, year: null, cast: [], _excluded: true, _expanded: true };
     return cache.movies[movieId];
   }
