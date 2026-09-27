@@ -75,7 +75,7 @@ const CONFIG = {
   // at all is what makes a puzzle feel trivial). maxPairDistance should
   // stay at or below MAX_GUESSES in game.html (currently 5) — anything
   // longer literally can't be won within the guess limit.
-  minPairDistance: 3,
+  minPairDistance: 2,
   maxPairDistance: 5,
 
   // Hard ceiling on how many actors the bidirectional search will expand
