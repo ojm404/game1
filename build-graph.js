@@ -75,10 +75,29 @@ const CONFIG = {
   //   420  - Marvel Studios (MCU)
   //   7505 - Marvel Entertainment (broader Marvel universe, includes older Spider-Man, X-Men via Sony/Fox)
   //   25   - 20th Century Fox/Studios (produced X-Men, Fantastic Four before Disney acquisition)
-  marvelCompanyIds: new Set([
-    420,  // Marvel Studios
-    7505, // Marvel Entertainment
-    25,   // 20th Century Fox/Studios (X-Men, Fantastic Four pre-Disney)
+marvelCompanyIds: new Set([420, 7505]),
+excludedKeywordIds: new Set([180547]),
+excludedMovieIds: new Set(),
+
+async function loadExcludedMovieIds() {
+  const listUrl = "/list/27741?language=en-US";
+  const res = await fetch(`${CONFIG.baseUrl}${listUrl}`, {
+    headers: { Authorization: `Bearer ${TMDB_KEY}` }
+  });
+  if (!res.ok) throw new Error(`TMDB X-Men list request failed (${res.status})`);
+  const data = await res.json();
+  for (const item of data.items || []) {
+    CONFIG.excludedMovieIds.add(item.id);
+  }
+}
+
+function isMarvelMovie(movieDetails) {
+  if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
+  const companyIds = (movieDetails.production_companies || []).map((c) => c.id);
+  if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
+  const keywordIds = ((movieDetails.keywords && movieDetails.keywords.keywords) || []).map((k) => k.id);
+  return keywordIds.some((id) => CONFIG.excludedKeywordIds.has(id));
+}
   ]),
 
   // TMDB keyword IDs that mark a title as MCU canon directly, independent
