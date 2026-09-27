@@ -88,7 +88,7 @@ const CONFIG = {
     "Javier Bardem",
     "Daniel Craig",
     "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Micha[...]
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine", "Ryan Gosling", "Ben Affleck", "Emma Watson"
   ],
 
   // A puzzle's TRUE shortest path must fall in this range or main() will
