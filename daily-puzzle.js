@@ -60,7 +60,7 @@ const CONFIG = {
   // Filter to exclude unpopular, lesser-known, and unreleased films.
   // These thresholds dramatically reduce puzzle-data.js file size by
   // preventing obscure titles from bloating the actor co-star network.
-  minPopularity: 5,           // TMDB popularity score (0-1000+, default ~10 for avg theatrical)
+  minPopularity: 3,           // TMDB popularity score (0-1000+, default ~10 for avg theatrical)
   minVoteCount: 50,           // Minimum # of user votes (prevents obscure/barely-reviewed films)
   allowUnreleasedMovies: false, // Set to true to include films with no release_date
 
@@ -87,7 +87,6 @@ const CONFIG = {
     "Emma Stone",
     "Christian Bale",
     "Viola Davis",
-    "Kaya Scodelario",
     "Henry Cavill",
     "Julia Stiles",
     "Kurt Russell",
@@ -161,6 +160,7 @@ const CONFIG = {
   // large or too small — check the actual byte size of out/puzzle-data.js
   // after a run and adjust from there. With the new popularity filters,
   // 600 is now a conservative upper bound; try 400-500 first.
+  minDiscoveredMovies: 350,
   maxDiscoveredMovies: 2000,
 
   // After the search connects the two actors, some nodes in the discovered
