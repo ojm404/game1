@@ -133,7 +133,6 @@ function isMarvelMovie(movieDetails) {
     "Emma Stone",
     "Christian Bale",
     "Viola Davis",
-    "Kaya Scodelario",
     "Henry Cavill",
     "Julia Stiles",
     "Kurt Russell",
