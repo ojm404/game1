@@ -46,142 +46,50 @@ const CONFIG = {
   selfAppearancePattern:
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
 
-  // Keep these in sync with build-graph.js's CONFIG of the same names.
-  // Exclude specific Marvel-owned entities without blacklisting the whole Fox/20th Century studio.
   marvelCompanyIds: new Set([420, 7505]),
-  excludedKeywordIds: new Set([180547]), // "Marvel Cinematic Universe (MCU)"
+  excludedKeywordIds: new Set([180547]),
 
-  // TMDB list 27741 is the X-Men film series list.
-  // Use exact movie IDs from that list to avoid removing unrelated Fox/20th Century titles.
   excludedMovieIds: new Set([
-    // populated dynamically at runtime by loadExcludedMovieIds()
   ]),
 
-  // Filter to exclude unpopular, lesser-known, and unreleased films.
-  // These thresholds dramatically reduce puzzle-data.js file size by
-  // preventing obscure titles from bloating the actor co-star network.
-  minPopularity: 3,           // TMDB popularity score (0-1000+, default ~10 for avg theatrical)
-  minVoteCount: 50,           // Minimum # of user votes (prevents obscure/barely-reviewed films)
-  allowUnreleasedMovies: false, // Set to true to include films with no release_date
+  minPopularity: 3,
+  minVoteCount: 50,
+  allowUnreleasedMovies: false,
 
-  // Pool to pick today's two actors from. Same list you're using in
-  // build-graph.js's seedActorNames works fine here.
   seedActorNames: [
-    "Tom Hanks",
-    "Meryl Streep",
-    "Denzel Washington",
-    "Julia Roberts",
-    "Leonardo DiCaprio",
-    "Kate Winslet",
-    "Brad Pitt",
-    "Cate Blanchett",
-    "Samuel L. Jackson",
-    "Nicole Kidman",
-    "Will Smith",
-    "Charlize Theron",
-    "Matt Damon",
-    "Scarlett Johansson",
-    "George Clooney",
-    "Sandra Bullock",
-    "Morgan Freeman",
-    "Emma Stone",
-    "Christian Bale",
-    "Viola Davis",
-    "Henry Cavill",
-    "Julia Stiles",
-    "Kurt Russell",
-    "James Spader",
-    "Jennifer Lawrence",
-    "Chris Pine",
-    "Simon Pegg",
-    "Zendaya",
-    "Idris Elba",
-    "Tom Cruise",
-    "Penelope Cruz",
-    "Javier Bardem",
-    "Daniel Craig",
-    "Kirsten Dunst",
-    "Kristen Stewart",
-    "Robert Pattinson",
-    "Tom Hardy",
-    "Anne Hathaway",
-    "Chris Evans",
-    "Chris Pratt",
-    "Robert Downey Jr.",
-    "Cillian Murphy",
-    "Keanu Reeves",
-    "Willem Defoe",
-    "Nicolas Cage",
-    "Oscar Isaac",
-    "Anthony Hopkins",
-    "Jodie Foster",
-    "Hilary Swank",
-    "Margot Robbie",
-    "Helen Mirren",
-    "Michael Caine",
-    "Ryan Gosling",
-    "Ben Affleck",
-    "Emma Watson"
+    "Tom Hanks", "Meryl Streep", "Denzel Washington", "Julia Roberts",
+    "Leonardo DiCaprio", "Kate Winslet", "Brad Pitt", "Cate Blanchett",
+    "Samuel L. Jackson", "Nicole Kidman", "Will Smith", "Charlize Theron",
+    "Matt Damon", "Scarlett Johansson", "George Clooney", "Sandra Bullock",
+    "Morgan Freeman", "Emma Stone", "Christian Bale", "Viola Davis",
+    "Henry Cavill", "Julia Stiles", "Kurt Russell", "James Spader",
+    "Jennifer Lawrence", "Chris Pine", "Simon Pegg", "Zendaya",
+    "Idris Elba", "Tom Cruise", "Penelope Cruz", "Javier Bardem",
+    "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson",
+    "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe",
+    "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster",
+    "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine",
+    "Ryan Gosling", "Ben Affleck", "Emma Watson"
   ],
 
-  // A puzzle's TRUE shortest path must fall in this range or main() will
-  // reject the pair and try a different one — this is what actually
-  // controls difficulty. Raise minPairDistance to eliminate "obvious"
-  // puzzles (two actors who happen to share one famous blockbuster
-  // connect in 1 hop regardless of how deep/rich the rest of the graph
-  // is — the game accepts ANY real connection, so an easy one existing
-  // at all is what makes a puzzle feel trivial). maxPairDistance should
-  // stay at or below MAX_GUESSES in game.html (currently 5) — anything
-  // longer literally can't be won within the guess limit.
   minPairDistance: 2,
   maxPairDistance: 5,
 
-  // Hard ceiling on how many actors the bidirectional search will expand
-  // before giving up on a pair and trying a different one. This is what
-  // keeps a single day's run inside a reasonable number of API calls —
-  // without it, a pair of very popular actors could pull in tens of
-  // thousands of requests before connecting. This is now a secondary
-  // safety ceiling, not the primary control — maxDiscoveredMovies below
-  // is what actually governs how big the search grows, because spending
-  // this whole budget unconditionally turned out to produce catastrophic
-  // graph sizes (one real run: 600 expansions here plus 600 more in
-  // closure produced 173,298 actors and 32,248 movies — tens of MB,
-  // likely over jsDelivr's 50MB hard limit for files served from GitHub,
-  // which is why the live puzzle silently stopped updating even though
-  // the workflow itself succeeded). The new popularity/voteCount filters
-  // above reduce graph expansion significantly, so this can now be lower.
   maxActorsExpanded: 400,
 
-  // The actual governing limit: stops the main search AND the closure
-  // pass (they share this one ceiling) once this many unique movies have
-  // been discovered, regardless of how much of maxActorsExpanded or
-  // maxLeafExpansions is left. This is what the shipped file size scales
-  // with directly, so it's the number to tune if a run comes out too
-  // large or too small — check the actual byte size of out/puzzle-data.js
-  // after a run and adjust from there. With the new popularity filters,
-  // 600 is now a conservative upper bound; try 400-500 first.
   minDiscoveredMovies: 500,
   maxDiscoveredMovies: 2000,
 
-  // After the search connects the two actors, some nodes in the discovered
-  // graph were only ever seen as someone else's co-star — their own
-  // filmography was never fetched, which means every guess made FROM that
-  // node would fail even when correct. fillInLeafActors() closes this
-  // iteratively (each round of newly-discovered actors gets expanded too,
-  // not just the first), so this is a TOTAL budget shared across every
-  // round, not a single pass — though maxDiscoveredMovies will usually
-  // stop closure well before this budget is ever fully spent.
   maxLeafExpansions: 600,
 
-  // Generate exactly one valid pair per day.
   targetValidPairs: 1,
 
-  // How many different random pairs to try before giving up for the day.
   maxAttempts: 8,
 
   requestsPerBatch: 20,
   batchPauseMs: 10_000,
-  maxRetries: 5, // for 429s and transient 5xx errors, with backoff
+  maxRetries: 5,
 };
 
 function sleep(ms) {
@@ -231,11 +139,6 @@ async function loadExcludedMovieIds() {
 }
 
 async function tmdb(urlPath, attempt = 1) {
-  // Checked before the limiter, not inside it — a cache hit is a local
-  // disk read, so it shouldn't cost a rate-limit slot or a pacing pause.
-  // This is what lets a run reuse everything a PREVIOUS day's run already
-  // fetched (see .github/workflows/daily-puzzle.yml, which persists this
-  // folder across runs), instead of every day starting from nothing.
   const file = cachePathFor(urlPath);
   if (fs.existsSync(file)) {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -251,12 +154,10 @@ async function tmdb(urlPath, attempt = 1) {
       if (attempt > CONFIG.maxRetries) {
         throw new Error(`TMDB request failed after ${CONFIG.maxRetries} retries (${res.status}): ${url}`);
       }
-      // TMDB sends Retry-After on 429s; fall back to exponential backoff if
-      // it's missing (also covers transient 5xx errors, which don't send it).
       const retryAfterHeader = res.headers.get("Retry-After");
       const waitMs = retryAfterHeader
         ? Number(retryAfterHeader) * 1000
-        : 2 ** attempt * 1000; // 2s, 4s, 8s, ...
+        : 2 ** attempt * 1000;
       console.log(
         `  TMDB returned ${res.status}, retrying in ${waitMs}ms (attempt ${attempt}/${CONFIG.maxRetries})`
       );
@@ -276,10 +177,6 @@ async function tmdb(urlPath, attempt = 1) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Filters — mirrors build-graph.js
-// ---------------------------------------------------------------------------
-
 function isMarvelMovie(movieDetails) {
   if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
 
@@ -297,21 +194,21 @@ function isNonFictionMovie(movieDetails) {
 }
 
 function isUnpopularOrUnreleasedMovie(movieDetails) {
-  // Exclude unreleased movies (no release_date)
   if (!CONFIG.allowUnreleasedMovies && !movieDetails.release_date) {
     return true;
   }
-
-  // Exclude very obscure movies (low popularity)
-  if (movieDetails.popularity && movieDetails.popularity < CONFIG.minPopularity) {
+  // Was `movieDetails.popularity && ... < minPopularity` — that short-
+  // circuits to false when popularity is exactly 0, so the MOST obscure
+  // movies (zero popularity, zero votes) slipped straight through while
+  // slightly-less-obscure ones correctly got caught. Using ?? 0 instead
+  // of a truthy guard means a missing/zero value is treated as exactly
+  // that — zero — and compared honestly against the threshold.
+  if ((movieDetails.popularity ?? 0) < CONFIG.minPopularity) {
     return true;
   }
-
-  // Exclude barely-reviewed movies (very few votes)
-  if (movieDetails.vote_count && movieDetails.vote_count < CONFIG.minVoteCount) {
+  if ((movieDetails.vote_count ?? 0) < CONFIG.minVoteCount) {
     return true;
   }
-
   return false;
 }
 
@@ -321,20 +218,14 @@ function isFictionalCastCredit(castMember) {
   return !CONFIG.selfAppearancePattern.test(character.trim());
 }
 
-// ---------------------------------------------------------------------------
-// Live, bounded, bidirectional BFS
-// ---------------------------------------------------------------------------
-
 async function resolveActorId(name) {
   const data = await tmdb(`/search/person?query=${encodeURIComponent(name)}&language=en-US`);
   const match = (data.results || []).find((p) => p.known_for_department === "Acting");
   return match ? match.id : (data.results && data.results[0] && data.results[0].id);
 }
 
-// A shared cache across one run, so the two frontiers never re-fetch the
-// same actor or movie twice even if both sides reach it.
 function makeGraphCache() {
-  return { actors: {}, movies: {} }; // id -> { name, movies:[] } / { title, year, cast:[] }
+  return { actors: {}, movies: {} };
 }
 
 async function expandActor(actorId, cache) {
@@ -347,9 +238,6 @@ async function expandActor(actorId, cache) {
     credits = await tmdb(`/person/${actorId}/movie_credits?language=en-US`);
   } catch (err) {
     if (err.status === 404) {
-      // TMDB occasionally merges duplicate person records, which can
-      // leave a stale ID behind. Treat as an actor with no further
-      // credits rather than crashing the whole run over one dead ID.
       console.log(`  person ${actorId} returned 404 (likely merged on TMDB) — skipping`);
       cache.actors[actorId] = cache.actors[actorId] || { name: null, movies: [] };
       cache.actors[actorId].movies = [];
@@ -378,16 +266,11 @@ async function expandMovie(movieId, cache) {
     details = await tmdb(`/movie/${movieId}?language=en-US&append_to_response=credits,keywords`);
   } catch (err) {
     if (err.status === 404) {
-      // TMDB periodically deletes or merges duplicate entries, so a movie
-      // ID that was valid when an actor's credits were fetched can later
-      // 404. Treat it the same as an excluded (Marvel/non-fiction) movie —
-      // empty cast, filtered out of the final output — instead of letting
-      // one stale ID crash the whole run.
       console.log(`  movie ${movieId} returned 404 (likely deleted/merged on TMDB) — skipping`);
       cache.movies[movieId] = { title: null, year: null, cast: [], _excluded: true, _expanded: true };
       return cache.movies[movieId];
     }
-    throw err; // anything else (network failure, retries exhausted) is still fatal
+    throw err;
   }
 
   if (isMarvelMovie(details) || isNonFictionMovie(details) || isUnpopularOrUnreleasedMovie(details)) {
@@ -414,28 +297,6 @@ async function expandMovie(movieId, cache) {
   return cache.movies[movieId];
 }
 
-/**
- * Alternately expands the smaller of two frontiers outward from startId and
- * endId, one hop at a time. This always spends the full maxActorsExpanded
- * budget, rather than winding down shortly after the two actors connect —
- * stopping early meant an easy, short-answer puzzle ended up with very
- * little real depth built around it, so a player deliberately trying a
- * longer (but still valid, still within the guess limit) chain would walk
- * off the edge of what was ever fetched. Whether the true shortest
- * connection is 2 hops or 5, the same budget now gets spent building real
- * breadth either way.
- *
- * Also tracks connectDistance: the round number at which the two
- * frontiers first touch. Since each round advances exactly one side by
- * one hop, this round count IS the true shortest-path distance between
- * the pair — exactly what main() needs to reject pairs that connect too
- * easily (an obvious shared blockbuster) or too distantly (unwinnable
- * within the 5-guess limit).
- *
- * Returns { found, connectDistance, cache } — cache holds every
- * actor/movie visited, which becomes the puzzle's shipped graph
- * regardless of outcome.
- */
 async function bidirectionalSearch(startId, endId, cache) {
   let frontA = new Set([startId]);
   let frontB = new Set([endId]);
@@ -478,7 +339,7 @@ async function bidirectionalSearch(startId, endId, cache) {
         for (const coStarId of movie.cast) {
           if (visitedOther.has(coStarId) && !found) {
             found = true;
-            connectDistance = roundsElapsed; // first-touch round = true distance
+            connectDistance = roundsElapsed;
           }
           if (!visitedSame.has(coStarId)) {
             visitedSame.add(coStarId);
@@ -494,10 +355,6 @@ async function bidirectionalSearch(startId, endId, cache) {
 
   return { found, connectDistance, cache };
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 function pickTwoRandom(list) {
   const shuffled = [...list].sort(() => Math.random() - 0.5);
@@ -533,11 +390,6 @@ function buildDistractorMap(actors, movies) {
 }
 
 function trimCacheToVisited(cache) {
-  // Build the surviving movies first — this is what actors' movie lists
-  // need to be filtered against below, since an actor's raw credit list
-  // can reference a movie (Marvel, documentary) that never makes it into
-  // this output. Without that filter, the game would later try to look up
-  // a movie ID that doesn't exist and crash on every single guess.
   const movies = {};
   for (const [id, m] of Object.entries(cache.movies)) {
     if (m._excluded) continue;
@@ -547,7 +399,7 @@ function trimCacheToVisited(cache) {
 
   const actors = {};
   for (const [id, a] of Object.entries(cache.actors)) {
-    if (!a.name) continue; // never actually resolved — skip
+    if (!a.name) continue;
     const survivingMovies = (a.movies || []).filter((movieId) =>
       survivingMovieIds.has(movieId)
     );
@@ -562,26 +414,6 @@ function trimCacheToVisited(cache) {
   return { actors, movies };
 }
 
-/**
- * The search stops the instant the two frontiers meet, to save API calls.
- * That means some actors in the discovered graph were only ever added via
- * expandMovie's co-star population (name only, empty .movies) — they were
- * never personally the actor being searched from, so their own filmography
- * was never fetched. Left as-is, any guess made from one of those nodes
- * would fail regardless of whether it's actually correct.
- *
- * A single follow-up pass isn't enough: expanding those actors' own
- * filmographies surfaces a NEW wave of undiscovered co-stars (whoever was
- * in the movies they were in), and that new wave needs expanding too, or
- * you just push the dead-end one hop further out instead of removing it —
- * which is exactly why the second hop kept failing even after the first
- * pass. So this keeps expanding newly-discovered actors in rounds — the
- * closure loop only stops when either nothing new turns up (the graph is
- * fully closed — every reachable actor has real data) or the total budget
- * runs out. Actors get expanded in the order they were first discovered,
- * which naturally spends the budget on nodes closer to the core of the
- * puzzle before it ever reaches obscure, unlikely-to-be-guessed ones.
- */
 async function fillInLeafActors(cache) {
   let totalExpanded = 0;
 
@@ -676,6 +508,22 @@ async function main() {
 
     await fillInLeafActors(cache);
 
+    // minDiscoveredMovies wasn't actually checked anywhere before this —
+    // it's a MINIMUM, so unlike maxDiscoveredMovies (which stops the
+    // search early) this can only be enforced by rejecting the whole pair
+    // after the search is done and trying again, the same way
+    // minPairDistance rejects a pair that connects too easily. Counts
+    // only surviving (non-excluded) movies, since that's what actually
+    // ends up playable.
+    const survivingMovieCount = Object.values(cache.movies).filter((m) => !m._excluded).length;
+    if (survivingMovieCount < CONFIG.minDiscoveredMovies) {
+      console.log(
+        `  graph too small (${survivingMovieCount} surviving movies, need at least ` +
+          `${CONFIG.minDiscoveredMovies}) — trying a different pair`
+      );
+      continue;
+    }
+
     const { actors, movies } = trimCacheToVisited(cache);
     console.log(
       `  connected. Puzzle graph: ${Object.keys(actors).length} actors, ` +
@@ -715,12 +563,12 @@ async function main() {
 
   fs.writeFileSync(path.join(CONFIG.outDir, "puzzle-data.js"), js);
   const fileSizeMB = (fs.statSync(path.join(CONFIG.outDir, "puzzle-data.js")).size / (1024 * 1024)).toFixed(2);
-  
+
   const aName = validPair.actors[validPair.a]?.name || `Actor ${validPair.a}`;
   const bName = validPair.actors[validPair.b]?.name || `Actor ${validPair.b}`;
 
   console.log(`\nWrote out/puzzle-data.js (${aName} <-> ${bName}), ${fileSizeMB} MB.`);
-  
+
   if (fileSizeMB > 10) {
     console.log(
       `  WARNING: ${fileSizeMB} MB is large for a file served via jsDelivr (hard limit 50MB) ` +
@@ -733,34 +581,3 @@ main().catch((err) => {
   console.error("daily-puzzle.js failed:", err);
   process.exit(1);
 });
-
-/**
- * How game.html should load this:
- *
- * Add this BEFORE your existing game <script> tag, pointing at wherever
- * this repo is hosted (jsDelivr example shown):
- *
- *   <script src="https://cdn.jsdelivr.net/gh/YOUR_USERNAME/YOUR_REPO@main/puzzle-data.js"></script>
- *
- * Then in game.html's init(), use:
- *
- *   async function init() {
- *     const data = window.SIX_DEGREES_DATA;
- *     if (!data) {
- *       document.getElementById('status').textContent =
- *         'Could not load today\'s puzzle. Try refreshing.';
- *       document.getElementById('status').className = 'status err';
- *       return;
- *     }
- *     actors = data.actors;
- *     movies = data.movies;
- *     startActor = data.a;
- *     endActor = data.b;
- *     newPuzzle();
- *   }
- *
- * The puzzle now has exactly ONE clear target pair (a <-> b) with a shared
- * actor and movie graph that allows multiple valid paths between them.
- * The game validates guesses by checking if the selected actor has worked
- * with anyone from the previous step's filmography.
- */
