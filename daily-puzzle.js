@@ -160,7 +160,7 @@ const CONFIG = {
   // large or too small — check the actual byte size of out/puzzle-data.js
   // after a run and adjust from there. With the new popularity filters,
   // 600 is now a conservative upper bound; try 400-500 first.
-  minDiscoveredMovies: 350,
+  minDiscoveredMovies: 500,
   maxDiscoveredMovies: 2000,
 
   // After the search connects the two actors, some nodes in the discovered
