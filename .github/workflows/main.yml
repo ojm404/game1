@@ -41,11 +41,7 @@ jobs:
           key: tmdb-cache-${{ github.run_id }}
           restore-keys: |
             tmdb-cache-
-function cachePathFor(urlPath) {
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  const safe = urlPath.replace(/[^a-z0-9_-]/gi, "_");
-  return path.join(CACHE_DIR, `${today}_${safe}.json`);
-}
+
       - name: Generate today's puzzle
         env:
           TMDB_KEY: ${{ secrets.TMDB_KEY }}
