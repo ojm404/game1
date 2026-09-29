@@ -112,9 +112,8 @@ const limiter = makeRateLimiter(CONFIG);
 const CACHE_DIR = path.join(__dirname, "cache");
 
 function cachePathFor(urlPath) {
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
   const safe = urlPath.replace(/[^a-z0-9_-]/gi, "_");
-  return path.join(CACHE_DIR, `${today}_${safe}.json`);
+  return path.join(CACHE_DIR, `${safe}.json`);
 }
 
 async function loadExcludedMovieIds() {
@@ -324,7 +323,14 @@ async function bidirectionalSearch(startId, endId, cache) {
       if (actorsExpanded >= CONFIG.maxActorsExpanded) {
         return { found, connectDistance, cache };
       }
-      if (Object.keys(cache.movies).length >= CONFIG.maxDiscoveredMovies) {
+      // Was a raw Object.keys(cache.movies).length check — that counts
+      // EXCLUDED movies too (Marvel, non-fiction, and now anything the
+      // popularity/vote filters reject), so a high exclusion rate burns
+      // through this budget on rejects rather than on actual playable
+      // content. Counting only survivors makes the budget track what the
+      // player will actually get.
+      const survivingSoFar = Object.values(cache.movies).filter((m) => !m._excluded).length;
+      if (survivingSoFar >= CONFIG.maxDiscoveredMovies) {
         console.log(
           `  hit maxDiscoveredMovies (${CONFIG.maxDiscoveredMovies}) during main search — stopping here`
         );
@@ -419,7 +425,8 @@ async function fillInLeafActors(cache) {
   let totalExpanded = 0;
 
   while (totalExpanded < CONFIG.maxLeafExpansions) {
-    if (Object.keys(cache.movies).length >= CONFIG.maxDiscoveredMovies) {
+    const survivingSoFar = Object.values(cache.movies).filter((m) => !m._excluded).length;
+    if (survivingSoFar >= CONFIG.maxDiscoveredMovies) {
       console.log(
         `  hit maxDiscoveredMovies (${CONFIG.maxDiscoveredMovies}) during closure — stopping here`
       );
