@@ -112,8 +112,9 @@ const limiter = makeRateLimiter(CONFIG);
 const CACHE_DIR = path.join(__dirname, "cache");
 
 function cachePathFor(urlPath) {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
   const safe = urlPath.replace(/[^a-z0-9_-]/gi, "_");
-  return path.join(CACHE_DIR, `${safe}.json`);
+  return path.join(CACHE_DIR, `${today}_${safe}.json`);
 }
 
 async function loadExcludedMovieIds() {
