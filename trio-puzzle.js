@@ -73,9 +73,17 @@ const CONFIG = {
   ],
 
   maxAnswerMovies: 25,        // how many of X's films to scan for candidates
-  linkMinVoteCount: 500,      // the film linking X to A/B/C must be well known
-  linkMaxBillingOrder: 5,     // A/B/C must be billed in the top N of that film
-  maxCandidateChecks: 15,     // filmographies fetched while hunting for a trio
+  linkMinVoteCount: 1500,     // the film linking X to A/B/C must be well known
+  linkMaxBillingOrder: 4,     // A/B/C must be billed in the top N of that film
+  candidatePoolSize: 40,      // only the candidates from the best-known films are considered
+  maxCandidateChecks: 30,     // filmographies fetched while hunting for a trio
+
+  // How famous the three shown actors must be. A film counts as "big" once it
+  // has this many TMDB votes, and each of A/B/C needs at least minFameFilms of
+  // them in their credits. Raise either number for bigger names, lower them if
+  // the generator starts failing to find a trio.
+  fameFilmVoteCount: 2000,
+  minFameFilms: 6,
   maxMoviesPerActor: 60,      // films kept per trio actor (best known first)
   minValidAnswers: 1,         // how many actors can complete the trio, in the data
   maxValidAnswers: 8,         // too many valid answers makes the puzzle easy
@@ -296,30 +304,44 @@ async function tryBuildPuzzle() {
 
   // 1. Candidates: actors billed near the top in X's best-known films.
   const xCredits = bestKnownCredits(await getCredits(answerId), CONFIG.maxAnswerMovies);
-  const candidateIds = new Set();
+  //    Each candidate is ranked by the best-known film they share with X, so
+  //    co-leads of blockbusters come before supporting names.
+  const candidateScore = new Map();   // actor id -> vote count of their best linking film
   for (const credit of xCredits) {
     const movie = await loadMovie(credit.id, graph);
     if (movie.excluded || movie.voteCount < CONFIG.linkMinVoteCount) continue;
     for (const id of movie.cast.slice(0, CONFIG.linkMaxBillingOrder)) {
-      if (String(id) !== String(answerId)) candidateIds.add(id);
+      if (String(id) === String(answerId)) continue;
+      candidateScore.set(id, Math.max(candidateScore.get(id) || 0, movie.voteCount));
     }
   }
-  console.log(`  ${candidateIds.size} candidate costars from ${xCredits.length} films`);
+  const candidateIds = [...candidateScore.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, CONFIG.candidatePoolSize)
+    .map(([id]) => id);
+  console.log(`  ${candidateScore.size} candidate costars from ${xCredits.length} films, using the top ${candidateIds.length}`);
 
   // 2. Keep the first three whose filmographies don't overlap.
   const chosen = [];
-  let checks = 0;
-  for (const id of shuffle([...candidateIds])) {
+  let checks = 0, notFamous = 0;
+  for (const id of shuffle(candidateIds)) {
     if (chosen.length === 3 || checks >= CONFIG.maxCandidateChecks) break;
     checks += 1;
     const credits = await getCredits(id);
+    const bigFilms = credits.filter(
+      (c) => creditLooksPlayable(c) && (c.vote_count ?? 0) >= CONFIG.fameFilmVoteCount
+    ).length;
+    if (bigFilms < CONFIG.minFameFilms) { notFamous += 1; continue; }
     const movieIds = new Set(credits.map((c) => c.id));
     const overlaps = chosen.some((ch) => [...movieIds].some((m) => ch.movieIds.has(m)));
     if (overlaps) continue;
     chosen.push({ id, credits, movieIds });
   }
   if (chosen.length < 3) {
-    console.log(`  only found ${chosen.length} non-overlapping costars in ${checks} checks`);
+    console.log(
+      `  only found ${chosen.length} usable costars in ${checks} checks ` +
+      `(${notFamous} not famous enough, the rest overlapped)`
+    );
     return null;
   }
 
