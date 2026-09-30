@@ -1,0 +1,78 @@
+name: Generate daily trio puzzle
+
+# Put this file at .github/workflows/trio-puzzle.yml
+# Same shape as daily-puzzle.yml: runs once a day, and you can trigger it
+# manually from the Actions tab. Uses the same TMDB_KEY secret.
+on:
+  schedule:
+    # 05:20 UTC every day, 20 minutes after the six-degrees job so the two
+    # never push at the same moment. trio-game.html's fallback URL flips to
+    # the new day at 06:00 UTC (ROLLOVER_HOUR_UTC), which leaves a buffer
+    # for GitHub starting scheduled jobs a bit late.
+    - cron: "20 5 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # needed to commit trio-data.js back to the repo
+
+jobs:
+  build-trio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Restore TMDB response cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: cache
+          # Same key prefix as daily-puzzle.yml, so both jobs build on the
+          # same pool of already-fetched TMDB responses.
+          key: tmdb-cache-${{ github.run_id }}
+          restore-keys: |
+            tmdb-cache-
+
+      - name: Generate today's trio
+        env:
+          TMDB_KEY: ${{ secrets.TMDB_KEY }}
+        run: node trio-puzzle.js
+
+      - name: Move output to repo root
+        run: mv out/trio-data.js trio-data.js
+
+      - name: Commit and push if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add trio-data.js
+
+          if git diff --staged --quiet; then
+            echo "No change to trio-data.js — nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "Daily trio puzzle: $(date -u +%Y-%m-%d)"
+
+          # main can move between checkout and push (the six-degrees job,
+          # or a manual run). trio-data.js is fully regenerated every run,
+          # so on a conflict just keep this run's version and retry.
+          # Note: during a rebase, "theirs" is the commit being replayed
+          # (this run's), and "ours" is the branch being rebased onto.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt/5) — fetching latest and rebasing on top..."
+            git fetch origin main
+            git rebase origin/main -X theirs
+          done
+
+          echo "Failed to push after 5 attempts."
+          exit 1
