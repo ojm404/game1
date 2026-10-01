@@ -46,7 +46,7 @@ const CONFIG = {
   excludedGenreIds: new Set([99]), // Documentary
   selfAppearancePattern:
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
-  marvelCompanyIds: new Set([420, 7505]),
+  marvelCompanyIds: new Set([420, 19551]),
   excludedKeywordIds: new Set([180547]),
   excludedMovieIds: new Set(),
   minPopularity: 3,
@@ -82,8 +82,8 @@ const CONFIG = {
   // has this many TMDB votes, and each of A/B/C needs at least minFameFilms of
   // them in their credits. Raise either number for bigger names, lower them if
   // the generator starts failing to find a trio.
-  fameFilmVoteCount: 2000,
-  minFameFilms: 6,
+  fameFilmVoteCount: 3000,
+  minFameFilms: 8,
   maxMoviesPerActor: 60,      // films kept per trio actor (best known first)
   minValidAnswers: 1,         // how many actors can complete the trio, in the data
   maxValidAnswers: 8,         // too many valid answers makes the puzzle easy
