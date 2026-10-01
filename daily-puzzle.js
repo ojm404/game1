@@ -46,7 +46,7 @@ const CONFIG = {
   selfAppearancePattern:
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
 
-  marvelCompanyIds: new Set([420, 7505]),
+  marvelCompanyIds: new Set([420, 19551]),
   excludedKeywordIds: new Set([180547]),
 
   excludedMovieIds: new Set([
