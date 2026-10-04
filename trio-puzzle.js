@@ -46,7 +46,7 @@ const CONFIG = {
   excludedGenreIds: new Set([99]), // Documentary
   selfAppearancePattern:
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
-  marvelCompanyIds: new Set([420, 19551]),
+  marvelCompanyIds: new Set([420, 7505]),
   excludedKeywordIds: new Set([180547]),
   excludedMovieIds: new Set(),
   minPopularity: 3,
@@ -82,8 +82,8 @@ const CONFIG = {
   // has this many TMDB votes, and each of A/B/C needs at least minFameFilms of
   // them in their credits. Raise either number for bigger names, lower them if
   // the generator starts failing to find a trio.
-  fameFilmVoteCount: 3000,
-  minFameFilms: 8,
+  fameFilmVoteCount: 2000,
+  minFameFilms: 6,
   maxMoviesPerActor: 60,      // films kept per trio actor (best known first)
   minValidAnswers: 1,         // how many actors can complete the trio, in the data
   maxValidAnswers: 8,         // too many valid answers makes the puzzle easy
@@ -260,6 +260,7 @@ async function loadMovie(movieId, graph) {
 
   for (const c of cast) {
     if (!graph.actors[c.id]) graph.actors[c.id] = { name: c.name };
+    if (!graph.actors[c.id].photo && c.profile_path) graph.actors[c.id].photo = c.profile_path;
   }
 
   return (graph.movies[movieId] = {
@@ -391,7 +392,10 @@ function buildPayload({ graph, trioIds, answerId }) {
   }
   const actors = {};
   for (const id of usedActors) {
-    if (graph.actors[id]) actors[id] = { name: graph.actors[id].name };
+    if (!graph.actors[id]) continue;
+    actors[id] = { name: graph.actors[id].name };
+    // Photos are only shown on the three tickets, so only those carry one.
+    if (trioIds.includes(id) && graph.actors[id].photo) actors[id].photo = graph.actors[id].photo;
   }
 
   // Names for autocomplete that are NOT in the data. They never match a film,
