@@ -10,13 +10,17 @@
  *   3. Pulls full details for every movie referenced, to get cast + genres + companies.
  *   4. Filters out:
  *        - Movies from the Marvel corporate family (MCU + Marvel Entertainment's
- *          Spider-Man/X-Men/Venom slate) via production company IDs.
+ *          Spider-Man/X-Men/Venom slate) via production company IDs, the MCU
+ *          keyword, and a hand-kept TMDB list of X-Men films.
+ *        - Obscure films (low TMDB popularity or vote count) and unreleased ones.
  *        - Documentaries, and any credit where the character name looks like a
  *          self-appearance (awards shows, talk shows, "Self", "Host", etc).
  *   5. Trims cast lists to top-billed N per movie (default 20) to control graph density.
- *   6. Writes actors.json / movies.json for the game to load.
+ *   6. Writes actors.json / movies.json for the game to load. Seed actors (the
+ *      only ones who can be a START or FINISH) also get a `photo` field, a TMDB
+ *      profile_path, for the picture on their ticket.
  *   7. BFS's a curated pool of well-known actor pairs and writes pairs.json —
- *      pairs with a real shortest-path distance of 3-5, for the game to pick from.
+ *      pairs with a real shortest-path distance of 2-5, for the game to pick from.
  *
  * Requirements: Node 18+ (built-in fetch). No dependencies.
  *
@@ -52,7 +56,7 @@ const CONFIG = {
 
   // Top-billed cast members kept per movie. Keeps hub movies from exploding
   // the branching factor and drops uncredited/extra roles.
-  maxCastPerMovie: 15,
+  maxCastPerMovie: 20,
 
   // Genre IDs to exclude outright (TMDB movie genre list).
   excludedGenreIds: new Set([
@@ -71,34 +75,9 @@ const CONFIG = {
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
 
   // Production company IDs to treat as "Marvel universe" and exclude entirely.
-  // Includes:
-  //   420  - Marvel Studios (MCU)
-  //   7505 - Marvel Entertainment (broader Marvel universe, includes older Spider-Man, X-Men via Sony/Fox)
-  //   25   - 20th Century Fox/Studios (produced X-Men, Fantastic Four before Disney acquisition)
-marvelCompanyIds: new Set([420, 7505]),
-excludedKeywordIds: new Set([180547]),
-excludedMovieIds: new Set(),
-
-async function loadExcludedMovieIds() {
-  const listUrl = "/list/27741?language=en-US";
-  const res = await fetch(`${CONFIG.baseUrl}${listUrl}`, {
-    headers: { Authorization: `Bearer ${TMDB_KEY}` }
-  });
-  if (!res.ok) throw new Error(`TMDB X-Men list request failed (${res.status})`);
-  const data = await res.json();
-  for (const item of data.items || []) {
-    CONFIG.excludedMovieIds.add(item.id);
-  }
-}
-
-function isMarvelMovie(movieDetails) {
-  if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
-  const companyIds = (movieDetails.production_companies || []).map((c) => c.id);
-  if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
-  const keywordIds = ((movieDetails.keywords && movieDetails.keywords.keywords) || []).map((k) => k.id);
-  return keywordIds.some((id) => CONFIG.excludedKeywordIds.has(id));
-}
-  ]),
+  // Kept identical to daily-puzzle.js, which is the source of truth for
+  // every setting the two scripts share.
+  marvelCompanyIds: new Set([420, 19551]),
 
   // TMDB keyword IDs that mark a title as MCU canon directly, independent
   // of which company is credited on that particular release. More precise
@@ -110,49 +89,56 @@ function isMarvelMovie(movieDetails) {
     180547, // "Marvel Cinematic Universe (MCU)"
   ]),
 
+  // Individual movie IDs to exclude. Filled in at startup from a TMDB list
+  // (see loadExcludedMovieIds) — add IDs here by hand for one-off exclusions.
+  excludedMovieIds: new Set([
+  ]),
+  excludedMovieListId: 27741, // TMDB list of X-Men films
+
+  // Any film whose title matches this is excluded, whatever companies or
+  // keywords TMDB lists for it. Catches the Fox-era Deadpool films
+  // (Deadpool, Deadpool 2, Once Upon a Deadpool), which carry neither of
+  // the company IDs above nor the MCU keyword. To block another franchise
+  // by name, add it inside the brackets with a | between names,
+  // e.g. /\b(deadpool|venom)\b/i
+  excludedTitlePattern: /\b(deadpool)\b/i,
+
+  // Obscure and unreleased films are dropped (same values as daily-puzzle.js).
+  minPopularity: 3,
+  minVoteCount: 50,
+  allowUnreleasedMovies: false,
+
   // Well-known actor names to seed pair-finding for the game. Add more —
   // the wider this pool, the better the variety of start/end pairs.
+  // Matched against TMDB's spelling ignoring capitals and accents, and any
+  // seed that can't be found is named in the log (see findGoodPairs).
   seedActorNames: [
-"Tom Hanks",
-    "Meryl Streep",
-    "Denzel Washington",
-    "Julia Roberts",
-    "Leonardo DiCaprio",
-    "Kate Winslet",
-    "Brad Pitt",
-    "Cate Blanchett",
-    "Samuel L. Jackson",
-    "Nicole Kidman",
-    "Will Smith",
-    "Charlize Theron",
-    "Matt Damon",
-    "Scarlett Johansson",
-    "George Clooney",
-    "Sandra Bullock",
-    "Morgan Freeman",
-    "Emma Stone",
-    "Christian Bale",
-    "Viola Davis",
-    "Henry Cavill",
-    "Julia Stiles",
-    "Kurt Russell",
-    "James Spader",
-    "Jennifer Lawrence",
-    "Chris Pine",
-    "Simon Pegg",
-    "Zendaya",
-    "Idris Elba",
-    "Tom Cruise",
-    "Penelope Cruz",
-    "Javier Bardem",
-    "Daniel Craig",
-    "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson", "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe", "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster", "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine", "Ryan Gosling", "Ben Affleck", "Emma Watson"
+    "Tom Hanks", "Meryl Streep", "Denzel Washington", "Julia Roberts",
+    "Leonardo DiCaprio", "Kate Winslet", "Brad Pitt", "Cate Blanchett",
+    "Samuel L. Jackson", "Nicole Kidman", "Will Smith", "Charlize Theron",
+    "Matt Damon", "Scarlett Johansson", "George Clooney", "Sandra Bullock",
+    "Morgan Freeman", "Emma Stone", "Christian Bale", "Viola Davis",
+    "Henry Cavill", "Julia Stiles", "Kurt Russell", "James Spader",
+    "Jennifer Lawrence", "Chris Pine", "Simon Pegg", "Zendaya",
+    "Idris Elba", "Tom Cruise", "Penélope Cruz", "Javier Bardem",
+    "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson",
+    "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Dafoe",
+    "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster",
+    "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine",
+    "Ryan Gosling", "Ben Affleck", "Emma Watson",
+    // Actors with a nickname shortcut in the game
+    "Timothée Chalamet", "Benedict Cumberbatch", "Owen Wilson", "Matthew McConaughey",
+    // Current names
+    "Florence Pugh", "Saoirse Ronan", "Adam Driver", "Joaquin Phoenix",
+    "Amy Adams", "Jake Gyllenhaal", "Emily Blunt", "Jessica Chastain",
+    "Natalie Portman", "Michael B. Jordan", "Daniel Kaluuya", "Mahershala Ali",
+    "Michelle Yeoh", "Pedro Pascal", "Ana de Armas", "Dev Patel"
   ],
 
   // Only keep pairs whose true shortest path is in this range — too close is
   // boring, too far is frustrating for a "guess the chain" game.
-  minPairDistance: 3,
+  minPairDistance: 2,
   maxPairDistance: 5,
 
   // Be polite to TMDB's rate limit (40 req / 10s on the free tier).
@@ -178,6 +164,12 @@ function ensureDir(dir) {
 function cachePath(key) {
   const safe = key.replace(/[^a-z0-9_-]/gi, "_");
   return path.join(CONFIG.cacheDir, `${safe}.json`);
+}
+
+// Lowercase, trimmed, accents stripped — so "Penelope Cruz" in the seed list
+// still finds TMDB's "Penélope Cruz".
+function normName(name) {
+  return String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 }
 
 // Simple on-disk cache so re-running the script doesn't re-fetch everything.
@@ -233,6 +225,19 @@ function makeRateLimiter({ requestsPerBatch, batchPauseMs }) {
 const limiter = makeRateLimiter(CONFIG);
 
 // ---------------------------------------------------------------------------
+// Step 0: load the hand-kept list of extra movies to exclude (X-Men films)
+// ---------------------------------------------------------------------------
+
+async function loadExcludedMovieIds() {
+  const url = `${CONFIG.baseUrl}/list/${CONFIG.excludedMovieListId}?language=en-US`;
+  const data = await limiter(() => cachedFetch(`list_${CONFIG.excludedMovieListId}`, url));
+  for (const item of data.items || []) {
+    CONFIG.excludedMovieIds.add(item.id);
+  }
+  console.log(`Loaded ${CONFIG.excludedMovieIds.size} individually excluded movies.`);
+}
+
+// ---------------------------------------------------------------------------
 // Step 1: pull the popular-actor pool
 // ---------------------------------------------------------------------------
 
@@ -278,6 +283,9 @@ async function fetchMovieDetails(movieId) {
 // ---------------------------------------------------------------------------
 
 function isMarvelMovie(movieDetails) {
+  if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
+  if (CONFIG.excludedTitlePattern && CONFIG.excludedTitlePattern.test(movieDetails.title || "")) return true;
+
   const companyIds = (movieDetails.production_companies || []).map((c) => c.id);
   if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
 
@@ -295,6 +303,14 @@ function isNonFictionMovie(movieDetails) {
   return genreIds.some((id) => CONFIG.excludedGenreIds.has(id));
 }
 
+function isUnpopularOrUnreleasedMovie(movieDetails) {
+  if (!CONFIG.allowUnreleasedMovies && !movieDetails.release_date) return true;
+  // ?? 0 so a missing or zero value is compared honestly against the threshold.
+  if ((movieDetails.popularity ?? 0) < CONFIG.minPopularity) return true;
+  if ((movieDetails.vote_count ?? 0) < CONFIG.minVoteCount) return true;
+  return false;
+}
+
 function isFictionalCastCredit(castMember) {
   const character = castMember.character || "";
   if (!character.trim()) return false;
@@ -309,10 +325,14 @@ async function buildGraph() {
   ensureDir(CONFIG.cacheDir);
   ensureDir(CONFIG.outDir);
 
+  await loadExcludedMovieIds();
+
   const actorPool = await fetchActorPool();
   const actorPoolIds = new Set(actorPool.map((a) => a.id));
+  const poolById = new Map(actorPool.map((a) => [a.id, a]));
+  const seedNames = new Set(CONFIG.seedActorNames.map(normName));
 
-  const actors = {}; // id -> { name, movies: [movieId,...] }
+  const actors = {}; // id -> { name, movies: [movieId,...], photo? }
   const movies = {}; // id -> { title, cast: [actorId,...] }
   const seenMovieIds = new Set();
 
@@ -350,6 +370,7 @@ async function buildGraph() {
 
     if (isMarvelMovie(details)) continue;
     if (isNonFictionMovie(details)) continue;
+    if (isUnpopularOrUnreleasedMovie(details)) continue;
 
     const fullCast = ((details.credits && details.credits.cast) || [])
       .filter(isFictionalCastCredit)
@@ -372,8 +393,14 @@ async function buildGraph() {
 
     for (const actorId of castInPool) {
       if (!actors[actorId]) {
-        const person = actorPool.find((a) => a.id === actorId);
+        const person = poolById.get(actorId);
         actors[actorId] = { name: person ? person.name : `#${actorId}`, movies: [] };
+        // Photo only for seed actors: they're the only ones who can be a
+        // START or FINISH, which is the only place the game shows a photo.
+        // Adding one to all ~5000 actors would just bloat actors.json.
+        if (person && person.profile_path && seedNames.has(normName(person.name))) {
+          actors[actorId].photo = person.profile_path;
+        }
       }
       actors[actorId].movies.push(Number(movieId));
     }
@@ -429,17 +456,29 @@ function bfsDistance(startId, endId, actors, movies) {
 function findGoodPairs(actors, movies) {
   const nameToId = {};
   for (const [id, actor] of Object.entries(actors)) {
-    nameToId[actor.name] = Number(id);
+    nameToId[normName(actor.name)] = Number(id);
   }
 
-  const seedIds = CONFIG.seedActorNames
-    .map((name) => nameToId[name])
-    .filter((id) => id !== undefined);
+  // A seed that isn't found used to be dropped without a word, so a typo
+  // quietly removed that actor from the game. Now they're named in the log.
+  const seedIds = [];
+  const missing = [];
+  for (const name of CONFIG.seedActorNames) {
+    const id = nameToId[normName(name)];
+    if (id === undefined) missing.push(name);
+    else seedIds.push(id);
+  }
 
   console.log(
     `Computing pairwise distances among ${seedIds.length}/${CONFIG.seedActorNames.length} ` +
       `seed actors found in the graph...`
   );
+  if (missing.length) {
+    console.log(
+      `  Seeds NOT found (check the spelling, or they aren't in the top ` +
+        `${CONFIG.actorPoolSize} popular actors): ${missing.join(", ")}`
+    );
+  }
 
   const pairs = [];
   for (let i = 0; i < seedIds.length; i++) {
