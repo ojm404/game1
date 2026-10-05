@@ -49,13 +49,29 @@ const CONFIG = {
   marvelCompanyIds: new Set([420, 19551]),
   excludedKeywordIds: new Set([180547]),
 
+  // Individual films to exclude, by TMDB id (the number in the film's
+  // themoviedb.org address, e.g. themoviedb.org/movie/12345-some-title
+  // is 12345). Separate ids with commas. The X-Men list is added to this
+  // automatically at startup.
   excludedMovieIds: new Set([
   ]),
+
+  // Any film whose title matches this is excluded, whatever companies or
+  // keywords TMDB lists for it. Catches the Fox-era Deadpool films
+  // (Deadpool, Deadpool 2, Once Upon a Deadpool), which carry neither of
+  // the company IDs above nor the MCU keyword. To block another franchise
+  // by name, add it inside the brackets with a | between names,
+  // e.g. /\b(deadpool|venom)\b/i
+  excludedTitlePattern: /\b(deadpool)\b/i,
 
   minPopularity: 3,
   minVoteCount: 50,
   allowUnreleasedMovies: false,
 
+  // These names are only used to SEARCH TMDB. The name shown in the game
+  // is the one TMDB sends back (see resolveActor), so a small spelling
+  // slip here no longer ends up on the START / FINISH ticket — but a
+  // badly wrong spelling can still find nobody, or the wrong person.
   seedActorNames: [
     "Tom Hanks", "Meryl Streep", "Denzel Washington", "Julia Roberts",
     "Leonardo DiCaprio", "Kate Winslet", "Brad Pitt", "Cate Blanchett",
@@ -64,13 +80,20 @@ const CONFIG = {
     "Morgan Freeman", "Emma Stone", "Christian Bale", "Viola Davis",
     "Henry Cavill", "Julia Stiles", "Kurt Russell", "James Spader",
     "Jennifer Lawrence", "Chris Pine", "Simon Pegg", "Zendaya",
-    "Idris Elba", "Tom Cruise", "Penelope Cruz", "Javier Bardem",
+    "Idris Elba", "Tom Cruise", "Penélope Cruz", "Javier Bardem",
     "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson",
     "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
-    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Defoe",
+    "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Dafoe",
     "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster",
     "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine",
-    "Ryan Gosling", "Ben Affleck", "Emma Watson"
+    "Ryan Gosling", "Ben Affleck", "Emma Watson",
+    // Actors with a nickname shortcut in the game
+    "Timothée Chalamet", "Benedict Cumberbatch", "Owen Wilson", "Matthew McConaughey",
+    // Current names
+    "Florence Pugh", "Saoirse Ronan", "Adam Driver", "Joaquin Phoenix",
+    "Amy Adams", "Jake Gyllenhaal", "Emily Blunt", "Jessica Chastain",
+    "Natalie Portman", "Michael B. Jordan", "Daniel Kaluuya", "Mahershala Ali",
+    "Michelle Yeoh", "Pedro Pascal", "Ana de Armas", "Dev Patel"
   ],
 
   minPairDistance: 2,
@@ -179,6 +202,7 @@ async function tmdb(urlPath, attempt = 1) {
 
 function isMarvelMovie(movieDetails) {
   if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
+  if (CONFIG.excludedTitlePattern && CONFIG.excludedTitlePattern.test(movieDetails.title || "")) return true;
 
   const companyIds = (movieDetails.production_companies || []).map((c) => c.id);
   if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
@@ -218,10 +242,17 @@ function isFictionalCastCredit(castMember) {
   return !CONFIG.selfAppearancePattern.test(character.trim());
 }
 
-async function resolveActorId(name) {
+// Looks a seed name up on TMDB and returns the person's id, the name as
+// TMDB spells it (accents and all — this is the name the game shows and
+// the one players' guesses are matched against, so it has to agree with
+// the spelling used in every film's cast list), and their profile photo
+// path (null if TMDB has none). Returns null if nobody was found.
+async function resolveActor(name) {
   const data = await tmdb(`/search/person?query=${encodeURIComponent(name)}&language=en-US`);
-  const match = (data.results || []).find((p) => p.known_for_department === "Acting");
-  return match ? match.id : (data.results && data.results[0] && data.results[0].id);
+  const results = data.results || [];
+  const match = results.find((p) => p.known_for_department === "Acting") || results[0];
+  if (!match) return null;
+  return { id: match.id, name: match.name || name, photo: match.profile_path || null };
 }
 
 function makeGraphCache() {
@@ -286,6 +317,9 @@ async function expandMovie(movieId, cache) {
   for (const c of cast) {
     if (!cache.actors[c.id]) cache.actors[c.id] = { name: c.name, movies: [] };
     if (!cache.actors[c.id].name) cache.actors[c.id].name = c.name;
+    // Cast lists carry each person's photo path for free, so keep it as a
+    // backup in case the search result for a seed actor had none.
+    if (!cache.actors[c.id].photo && c.profile_path) cache.actors[c.id].photo = c.profile_path;
   }
 
   cache.movies[movieId] = {
@@ -368,35 +402,11 @@ function pickTwoRandom(list) {
   return [shuffled[0], shuffled[1]];
 }
 
-function buildDistractorMap(actors, movies) {
-  const neighborIds = {};
-  for (const actorId of Object.keys(actors)) {
-    neighborIds[actorId] = new Set();
-  }
-
-  for (const movie of Object.values(movies)) {
-    if (!movie || !Array.isArray(movie.cast)) continue;
-    const cast = movie.cast;
-    for (const actorId of cast) {
-      for (const coStarId of cast) {
-        if (actorId !== coStarId) {
-          neighborIds[String(actorId)] = neighborIds[String(actorId)] || new Set();
-          neighborIds[String(actorId)].add(Number(coStarId));
-        }
-      }
-    }
-  }
-
-  const distractorMap = {};
-  for (const [actorId, neighbors] of Object.entries(neighborIds)) {
-    distractorMap[actorId] = Array.from(neighbors)
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 6);
-  }
-  return distractorMap;
-}
-
-function trimCacheToVisited(cache) {
+// photoIds: the actors whose photo should be written to the output. The
+// game only shows photos on the START and FINISH tickets, so only those
+// two get one — putting a photo path on every actor in the graph would
+// add a lot of weight to the file for pictures nobody ever sees.
+function trimCacheToVisited(cache, photoIds = new Set()) {
   const movies = {};
   for (const [id, m] of Object.entries(cache.movies)) {
     if (m._excluded) continue;
@@ -411,11 +421,7 @@ function trimCacheToVisited(cache) {
       survivingMovieIds.has(movieId)
     );
     actors[id] = { name: a.name, movies: survivingMovies };
-  }
-
-  const distractors = buildDistractorMap(actors, movies);
-  for (const [id, actor] of Object.entries(actors)) {
-    actor.distractors = distractors[id] || [];
+    if (photoIds.has(String(id)) && a.photo) actors[id].photo = a.photo;
   }
 
   return { actors, movies };
@@ -479,15 +485,18 @@ async function main() {
     const [nameA, nameB] = pickTwoRandom(CONFIG.seedActorNames);
     console.log(`Attempt ${attempt}: trying ${nameA} <-> ${nameB}`);
 
-    const [idA, idB] = await Promise.all([resolveActorId(nameA), resolveActorId(nameB)]);
-    if (!idA || !idB || idA === idB) {
+    const [actorA, actorB] = await Promise.all([resolveActor(nameA), resolveActor(nameB)]);
+    if (!actorA || !actorB || actorA.id === actorB.id) {
       console.log("  could not resolve both actors, trying a different pair");
       continue;
     }
+    const idA = actorA.id, idB = actorB.id;
+    if (actorA.name !== nameA) console.log(`  note: seed "${nameA}" resolved to "${actorA.name}" on TMDB`);
+    if (actorB.name !== nameB) console.log(`  note: seed "${nameB}" resolved to "${actorB.name}" on TMDB`);
 
     const cache = makeGraphCache();
-    cache.actors[idA] = { name: nameA, movies: [] };
-    cache.actors[idB] = { name: nameB, movies: [] };
+    cache.actors[idA] = { name: actorA.name, movies: [], photo: actorA.photo };
+    cache.actors[idB] = { name: actorB.name, movies: [], photo: actorB.photo };
 
     const { found, connectDistance } = await bidirectionalSearch(idA, idB, cache);
 
@@ -532,11 +541,14 @@ async function main() {
       continue;
     }
 
-    const { actors, movies } = trimCacheToVisited(cache);
+    const { actors, movies } = trimCacheToVisited(cache, new Set([String(idA), String(idB)]));
     console.log(
       `  connected. Puzzle graph: ${Object.keys(actors).length} actors, ` +
         `${Object.keys(movies).length} movies.`
     );
+    for (const id of [idA, idB]) {
+      if (!actors[id].photo) console.log(`  note: no TMDB photo for ${actors[id].name} — the game will show initials`);
+    }
 
     validPair = {
       a: idA,
