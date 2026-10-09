@@ -102,7 +102,11 @@ const CONFIG = {
   maxActorsExpanded: 400,
 
   minDiscoveredMovies: 500,
-  maxDiscoveredMovies: 2000,
+  // Total playable films in the shipped graph. Raised from 2000: at 2000
+  // the budget ran out after only ~50 actors had their full filmography
+  // loaded, so most actors a player landed on were missing well-known
+  // films. Bigger number = fuller filmographies, bigger file, longer run.
+  maxDiscoveredMovies: 4000,
 
   maxLeafExpansions: 600,
 
@@ -255,6 +259,19 @@ async function resolveActor(name) {
   return { id: match.id, name: match.name || name, photo: match.profile_path || null };
 }
 
+// A person's credits list already carries each film's popularity, vote
+// count, release date and genres. Checking those here means films that
+// would be thrown out anyway are never fetched at all, which roughly
+// halves the number of TMDB requests and leaves the run time for films
+// that will actually be playable.
+function creditLooksExcluded(credit) {
+  if (!CONFIG.allowUnreleasedMovies && credit.release_date === "") return true;
+  if (typeof credit.popularity === "number" && credit.popularity < CONFIG.minPopularity) return true;
+  if (typeof credit.vote_count === "number" && credit.vote_count < CONFIG.minVoteCount) return true;
+  if (Array.isArray(credit.genre_ids) && credit.genre_ids.some((id) => CONFIG.excludedGenreIds.has(id))) return true;
+  return false;
+}
+
 function makeGraphCache() {
   return { actors: {}, movies: {} };
 }
@@ -280,6 +297,7 @@ async function expandActor(actorId, cache) {
 
   const movieIds = (credits.cast || [])
     .filter(isFictionalCastCredit)
+    .filter((c) => !creditLooksExcluded(c))
     .map((c) => c.id);
 
   cache.actors[actorId] = cache.actors[actorId] || { name: null, movies: [] };
@@ -320,6 +338,9 @@ async function expandMovie(movieId, cache) {
     // Cast lists carry each person's photo path for free, so keep it as a
     // backup in case the search result for a seed actor had none.
     if (!cache.actors[c.id].photo && c.profile_path) cache.actors[c.id].photo = c.profile_path;
+    // TMDB's popularity score, used to decide whose full filmography to
+    // load first when the budget can't cover everyone.
+    cache.actors[c.id].popularity = Math.max(cache.actors[c.id].popularity || 0, c.popularity ?? 0);
   }
 
   cache.movies[movieId] = {
@@ -353,7 +374,13 @@ async function bidirectionalSearch(startId, endId, cache) {
 
     const next = new Set();
 
-    for (const actorId of frontier) {
+    // Most popular actors first, so if a budget runs out part-way through
+    // a round it has been spent on the names players are likeliest to use.
+    const ordered = [...frontier].sort(
+      (x, y) => ((cache.actors[y] && cache.actors[y].popularity) || 0) - ((cache.actors[x] && cache.actors[x].popularity) || 0)
+    );
+
+    for (const actorId of ordered) {
       if (actorsExpanded >= CONFIG.maxActorsExpanded) {
         return { found, connectDistance, cache };
       }
@@ -388,6 +415,14 @@ async function bidirectionalSearch(startId, endId, cache) {
           }
         }
       }
+
+      // The search's only job is to prove the two actors connect and how
+      // far apart they are. It used to keep going after that until a
+      // budget ran out, spending the whole film budget on whichever
+      // co-stars happened to be listed first. Stopping here (once this
+      // actor's films are all loaded) hands the rest of the budget to
+      // fillInLeafActors, which spends it on the most popular actors.
+      if (found) return { found, connectDistance, cache };
     }
 
     if (expandingA) frontA = next;
@@ -439,9 +474,11 @@ async function fillInLeafActors(cache) {
       break;
     }
 
-    const unexpanded = Object.keys(cache.actors).filter(
-      (id) => !cache.actors[id]._expanded
-    );
+    // Most popular first: a full filmography matters most for the actors
+    // players are likeliest to route through.
+    const unexpanded = Object.keys(cache.actors)
+      .filter((id) => !cache.actors[id]._expanded)
+      .sort((x, y) => (cache.actors[y].popularity || 0) - (cache.actors[x].popularity || 0));
 
     if (unexpanded.length === 0) {
       console.log("  graph fully closed — every reachable actor has real filmography data");
@@ -455,10 +492,17 @@ async function fillInLeafActors(cache) {
         `(${totalExpanded + batch.length}/${CONFIG.maxLeafExpansions} budget used)`
     );
 
+    let playable = survivingSoFar;
     for (const actorId of batch) {
+      // Checked per actor, not just once per round: a round can hold
+      // hundreds of actors, which would otherwise overshoot the film
+      // budget many times over.
+      if (playable >= CONFIG.maxDiscoveredMovies) break;
       const { movieIds } = await expandActor(actorId, cache);
       for (const movieId of movieIds) {
-        await expandMovie(movieId, cache);
+        const alreadyLoaded = Boolean(cache.movies[movieId]);
+        const movie = await expandMovie(movieId, cache);
+        if (!alreadyLoaded && !movie._excluded) playable += 1;
       }
       totalExpanded += 1;
     }
