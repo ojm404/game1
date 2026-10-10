@@ -39,7 +39,7 @@ const CONFIG = {
   baseUrl: "https://api.themoviedb.org/3",
   outDir: path.join(__dirname, "out"),
 
-  maxCastPerMovie: 20,
+  maxCastPerMovie: 25,
 
   excludedGenreIds: new Set([99]), // Documentary
 
@@ -67,6 +67,32 @@ const CONFIG = {
   minPopularity: 3,
   minVoteCount: 50,
   allowUnreleasedMovies: false,
+
+  // ---- Always-included films --------------------------------------
+  // Every puzzle starts with a pool of well-known films already loaded,
+  // before the search spends any budget, so a major film can't be left
+  // out just because none of its cast happened to be loaded in full.
+  // The pool is: TMDB's most-voted films of all time, plus the most-voted
+  // films of the last couple of years (so new hits get in before they
+  // have had time to climb the all-time list), plus anything you list by
+  // hand. The Marvel / documentary / popularity filters still apply.
+  popularPoolPages: 40,      // 20 films a page: the 800 most-voted films ever
+  recentPoolPages: 10,       // the 200 most-voted films of the last...
+  recentPoolMonths: 24,      // ...this many months
+  // Films to force in by TMDB id (the number in the film's themoviedb.org
+  // address). Use this if a film you care about still isn't showing up.
+  alwaysIncludeMovieIds: new Set([
+  ]),
+
+  // ---- How long saved TMDB answers are trusted ---------------------
+  // Answers used to be kept forever, so a film first seen before it had
+  // enough votes stayed excluded for good, and an actor's saved list of
+  // films never gained their new releases. Now each saved answer is
+  // re-fetched once it is older than this many days.
+  cacheDaysLists: 7,         // an actor's film list, name searches, the lists above
+  cacheDaysMovies: 30,       // a film's details and cast
+  cacheDaysNewMovies: 3,     // ...when the film is new or not out yet
+  newReleaseWindowDays: 120, // "new" = released within this many days
 
   // These names are only used to SEARCH TMDB. The name shown in the game
   // is the one TMDB sends back (see resolveActor), so a small spelling
@@ -144,31 +170,36 @@ function cachePathFor(urlPath) {
 }
 
 async function loadExcludedMovieIds() {
-  const listUrl = "/list/27741?language=en-US";
-  const file = cachePathFor(listUrl);
-  let data;
+  // The X-Men list, fetched through the shared cache like everything else.
+  const data = await tmdb("/list/27741?language=en-US");
+  for (const item of data.items || []) CONFIG.excludedMovieIds.add(item.id);
+}
 
-  if (fs.existsSync(file)) {
-    data = JSON.parse(fs.readFileSync(file, "utf8"));
-  } else {
-    const url = `${CONFIG.baseUrl}${listUrl}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${TMDB_KEY}` } });
-    if (!res.ok) {
-      throw new Error(`TMDB X-Men list request failed (${res.status}): ${url}`);
-    }
-    data = await res.json();
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(data));
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How many days a saved answer for this request stays good. Spread by up
+// to a quarter either way (always the same for the same request) so that
+// files saved on the same day don't all expire on the same day.
+function cacheMaxAgeDays(urlPath, data) {
+  let days = CONFIG.cacheDaysLists;
+  if (urlPath.startsWith("/movie/")) {
+    const released = data && data.release_date ? Date.parse(data.release_date) : NaN;
+    const isNew = !Number.isFinite(released) || Date.now() - released < CONFIG.newReleaseWindowDays * DAY_MS;
+    days = isNew ? CONFIG.cacheDaysNewMovies : CONFIG.cacheDaysMovies;
   }
-
-  const ids = (data.items || []).map((item) => item.id);
-  for (const id of ids) CONFIG.excludedMovieIds.add(id);
+  let hash = 0;
+  for (let i = 0; i < urlPath.length; i++) hash = (hash * 31 + urlPath.charCodeAt(i)) % 1000;
+  return days * (0.75 + hash / 2000);
 }
 
 async function tmdb(urlPath, attempt = 1) {
   const file = cachePathFor(urlPath);
+  let stale = null; // an out-of-date saved answer, kept as a fallback
   if (fs.existsSync(file)) {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    const cached = JSON.parse(fs.readFileSync(file, "utf8"));
+    const ageDays = (Date.now() - fs.statSync(file).mtimeMs) / DAY_MS;
+    if (ageDays <= cacheMaxAgeDays(urlPath, cached)) return cached;
+    stale = cached;
   }
 
   const url = `${CONFIG.baseUrl}${urlPath}`;
@@ -179,6 +210,10 @@ async function tmdb(urlPath, attempt = 1) {
 
     if (res.status === 429 || res.status >= 500) {
       if (attempt > CONFIG.maxRetries) {
+        if (stale) {
+          console.log(`  TMDB still failing (${res.status}) — using the older saved answer for ${urlPath}`);
+          return stale;
+        }
         throw new Error(`TMDB request failed after ${CONFIG.maxRetries} retries (${res.status}): ${url}`);
       }
       const retryAfterHeader = res.headers.get("Retry-After");
@@ -270,6 +305,36 @@ function creditLooksExcluded(credit) {
   if (typeof credit.vote_count === "number" && credit.vote_count < CONFIG.minVoteCount) return true;
   if (Array.isArray(credit.genre_ids) && credit.genre_ids.some((id) => CONFIG.excludedGenreIds.has(id))) return true;
   return false;
+}
+
+// The ids of the always-included films (see CONFIG). Best effort: if
+// TMDB's lists can't be fetched the puzzle is still generated, just
+// without the guarantee for that day.
+async function loadPopularPoolIds() {
+  const ids = new Set(CONFIG.alwaysIncludeMovieIds);
+  const base =
+    "/discover/movie?include_adult=false&language=en-US&sort_by=vote_count.desc" +
+    `&without_genres=${[...CONFIG.excludedGenreIds].join(",")}`;
+  // First of the month, so the request (and its saved answer) only
+  // changes once a month rather than every day.
+  const since = new Date();
+  since.setUTCDate(1);
+  since.setUTCMonth(since.getUTCMonth() - CONFIG.recentPoolMonths);
+  const sinceStr = since.toISOString().slice(0, 10);
+  try {
+    for (let page = 1; page <= CONFIG.popularPoolPages; page++) {
+      const data = await tmdb(`${base}&page=${page}`);
+      for (const m of data.results || []) ids.add(m.id);
+    }
+    for (let page = 1; page <= CONFIG.recentPoolPages; page++) {
+      const data = await tmdb(`${base}&primary_release_date.gte=${sinceStr}&page=${page}`);
+      for (const m of data.results || []) ids.add(m.id);
+    }
+  } catch (err) {
+    console.log(`  WARNING: could not load the full popular-film pool (${err.message}) — continuing with ${ids.size}`);
+  }
+  console.log(`Always-included film pool: ${ids.size} films (before filters).`);
+  return [...ids];
 }
 
 function makeGraphCache() {
@@ -522,6 +587,7 @@ async function fillInLeafActors(cache) {
 async function main() {
   fs.mkdirSync(CONFIG.outDir, { recursive: true });
   await loadExcludedMovieIds();
+  const poolIds = await loadPopularPoolIds();
 
   let validPair = null;
 
@@ -541,6 +607,11 @@ async function main() {
     const cache = makeGraphCache();
     cache.actors[idA] = { name: actorA.name, movies: [], photo: actorA.photo };
     cache.actors[idB] = { name: actorB.name, movies: [], photo: actorB.photo };
+
+    // Load the always-included films first, so they are never crowded out
+    // by the film budget. Their casts join the graph as actors, and the
+    // most popular of them get their full filmographies in fillInLeafActors.
+    for (const movieId of poolIds) await expandMovie(movieId, cache);
 
     const { found, connectDistance } = await bidirectionalSearch(idA, idB, cache);
 
