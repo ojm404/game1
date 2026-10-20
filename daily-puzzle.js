@@ -39,7 +39,7 @@ const CONFIG = {
   baseUrl: "https://api.themoviedb.org/3",
   outDir: path.join(__dirname, "out"),
 
-  maxCastPerMovie: 25,
+  maxCastPerMovie: 20,
 
   excludedGenreIds: new Set([99]), // Documentary
 
@@ -58,11 +58,12 @@ const CONFIG = {
 
   // Any film whose title matches this is excluded, whatever companies or
   // keywords TMDB lists for it. Catches the Fox-era Deadpool films
-  // (Deadpool, Deadpool 2, Once Upon a Deadpool), which carry neither of
-  // the company IDs above nor the MCU keyword. To block another franchise
+  // (Deadpool, Deadpool 2, Once Upon a Deadpool) and every Spider-Man
+  // film, including the original 2002-2007 trilogy, the Amazing
+  // Spider-Man pair and the animated Spider-Verse films. To block another franchise
   // by name, add it inside the brackets with a | between names,
   // e.g. /\b(deadpool|venom)\b/i
-  excludedTitlePattern: /\b(deadpool)\b/i,
+  excludedTitlePattern: /\b(deadpool|spider-?man)\b/i,
 
   minPopularity: 3,
   minVoteCount: 50,
@@ -119,7 +120,19 @@ const CONFIG = {
     "Florence Pugh", "Saoirse Ronan", "Adam Driver", "Joaquin Phoenix",
     "Amy Adams", "Jake Gyllenhaal", "Emily Blunt", "Jessica Chastain",
     "Natalie Portman", "Michael B. Jordan", "Daniel Kaluuya", "Mahershala Ali",
-    "Michelle Yeoh", "Pedro Pascal", "Ana de Armas", "Dev Patel"
+    "Michelle Yeoh", "Pedro Pascal", "Ana de Armas", "Dev Patel",
+    // Long, well-connected careers
+    "Robert De Niro", "Al Pacino", "Harrison Ford", "Jeff Bridges",
+    "Sigourney Weaver", "Michelle Pfeiffer", "Susan Sarandon", "Julianne Moore",
+    "Frances McDormand", "Gary Oldman", "Ralph Fiennes", "Emma Thompson",
+    "Judi Dench", "Bill Murray", "Woody Harrelson", "Steve Buscemi",
+    // Household names
+    "Bradley Cooper", "Jennifer Aniston", "Reese Witherspoon", "Cameron Diaz",
+    "Hugh Grant", "Colin Firth", "Jack Nicholson", "Dustin Hoffman",
+    "Robin Williams", "Jim Carrey", "Eddie Murphy", "Ben Stiller",
+    "Adam Sandler", "Angelina Jolie", "Johnny Depp", "Russell Crowe",
+    "Liam Neeson", "Ewan McGregor", "Keira Knightley", "Rachel McAdams",
+    "Mark Wahlberg", "Jamie Foxx", "Octavia Spencer", "Glenn Close"
   ],
 
   minPairDistance: 2,
