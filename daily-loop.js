@@ -12,14 +12,15 @@
  * daily-puzzle.js. The TMDB client, cache layout and Marvel / non-fiction /
  * popularity filters are copied from that script, and the TMDB URL paths
  * are identical, so both scripts read and write the same cache/ entries.
- * If you change a filter in daily-puzzle.js, mirror it here.
+ * If you change a filter or the seed list in daily-puzzle.js, mirror it here.
  *
  * How it differs from daily-puzzle.js:
  *   - One actor, not two. The graph is grown outward from that actor,
  *     expanding their best-known co-stars first.
  *   - Before a puzzle is accepted, a solver proves that a loop back to the
- *     start actually exists inside the shipped graph, and a sample loop
- *     for each length is stored so the page can show an answer.
+ *     start actually exists inside the shipped graph. The loops it finds
+ *     are only used for that check and for the log: they are NOT written
+ *     to the output, because the game never reveals an answer.
  *
  * Output: out/loop-data.js, which assigns window.LOOP_DATA.
  */
@@ -48,12 +49,56 @@ const CONFIG = {
 
   marvelCompanyIds: new Set([420, 19551]),
   excludedKeywordIds: new Set([180547]),
-  excludedMovieIds: new Set([]),
+
+  // Individual films to exclude, by TMDB id (the number in the film's
+  // themoviedb.org address, e.g. themoviedb.org/movie/12345-some-title
+  // is 12345). Separate ids with commas. The X-Men list is added to this
+  // automatically at startup.
+  excludedMovieIds: new Set([
+  ]),
+
+  // Any film whose title matches this is excluded, whatever companies or
+  // keywords TMDB lists for it. Catches the Fox-era Deadpool films
+  // (Deadpool, Deadpool 2, Once Upon a Deadpool) and every Spider-Man
+  // film, including the original 2002-2007 trilogy, the Amazing
+  // Spider-Man pair and the animated Spider-Verse films. To block another franchise
+  // by name, add it inside the brackets with a | between names,
+  // e.g. /\b(deadpool|venom)\b/i
+  excludedTitlePattern: /\b(deadpool|spider-?man)\b/i,
 
   minPopularity: 3,
   minVoteCount: 50,
   allowUnreleasedMovies: false,
 
+  // ---- Always-included films --------------------------------------
+  // Every puzzle starts with a pool of well-known films already loaded,
+  // before the search spends any budget, so a major film can't be left
+  // out just because none of its cast happened to be loaded in full.
+  // The pool is: TMDB's most-voted films of all time, plus the most-voted
+  // films of the last couple of years (so new hits get in before they
+  // have had time to climb the all-time list), plus anything you list by
+  // hand. The Marvel / documentary / popularity filters still apply.
+  popularPoolPages: 40,      // 20 films a page: the 800 most-voted films ever
+  recentPoolPages: 10,       // the 200 most-voted films of the last...
+  recentPoolMonths: 24,      // ...this many months
+  // Films to force in by TMDB id (the number in the film's themoviedb.org
+  // address). Use this if a film you care about still isn't showing up.
+  alwaysIncludeMovieIds: new Set([
+  ]),
+
+  // ---- How long saved TMDB answers are trusted ---------------------
+  // Answers used to be kept forever, so a film first seen before it had
+  // enough votes stayed excluded for good, and an actor's saved list of
+  // films never gained their new releases. Now each saved answer is
+  // re-fetched once it is older than this many days.
+  cacheDaysLists: 7,         // an actor's film list, name searches, the lists above
+  cacheDaysMovies: 30,       // a film's details and cast
+  cacheDaysNewMovies: 3,     // ...when the film is new or not out yet
+  newReleaseWindowDays: 120, // "new" = released within this many days
+
+  // Same list as daily-puzzle.js. These names are only used to SEARCH
+  // TMDB; the name shown in the game is the one TMDB sends back (see
+  // resolveActor).
   seedActorNames: [
     "Tom Hanks", "Meryl Streep", "Denzel Washington", "Julia Roberts",
     "Leonardo DiCaprio", "Kate Winslet", "Brad Pitt", "Cate Blanchett",
@@ -62,19 +107,41 @@ const CONFIG = {
     "Morgan Freeman", "Emma Stone", "Christian Bale", "Viola Davis",
     "Henry Cavill", "Julia Stiles", "Kurt Russell", "James Spader",
     "Jennifer Lawrence", "Chris Pine", "Simon Pegg", "Zendaya",
-    "Idris Elba", "Tom Cruise", "Penelope Cruz", "Javier Bardem",
+    "Idris Elba", "Tom Cruise", "Penélope Cruz", "Javier Bardem",
     "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson",
     "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
     "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Dafoe",
     "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster",
     "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine",
-    "Ryan Gosling", "Ben Affleck", "Emma Watson"
+    "Ryan Gosling", "Ben Affleck", "Emma Watson",
+    // Actors with a nickname shortcut in the game
+    "Timothée Chalamet", "Benedict Cumberbatch", "Owen Wilson", "Matthew McConaughey",
+    // Current names
+    "Florence Pugh", "Saoirse Ronan", "Adam Driver", "Joaquin Phoenix",
+    "Amy Adams", "Jake Gyllenhaal", "Emily Blunt", "Jessica Chastain",
+    "Natalie Portman", "Michael B. Jordan", "Daniel Kaluuya", "Mahershala Ali",
+    "Michelle Yeoh", "Pedro Pascal", "Ana de Armas", "Dev Patel",
+    // Long, well-connected careers
+    "Robert De Niro", "Al Pacino", "Harrison Ford", "Jeff Bridges",
+    "Sigourney Weaver", "Michelle Pfeiffer", "Susan Sarandon", "Julianne Moore",
+    "Frances McDormand", "Gary Oldman", "Ralph Fiennes", "Emma Thompson",
+    "Judi Dench", "Bill Murray", "Woody Harrelson", "Steve Buscemi",
+    // Household names
+    "Bradley Cooper", "Jennifer Aniston", "Reese Witherspoon", "Cameron Diaz",
+    "Hugh Grant", "Colin Firth", "Jack Nicholson", "Dustin Hoffman",
+    "Robin Williams", "Jim Carrey", "Eddie Murphy", "Ben Stiller",
+    "Adam Sandler", "Angelina Jolie", "Johnny Depp", "Russell Crowe",
+    "Liam Neeson", "Ewan McGregor", "Keira Knightley", "Rachel McAdams",
+    "Mark Wahlberg", "Jamie Foxx", "Octavia Spencer", "Glenn Close"
   ],
 
   // Graph budget. Expansion stops at whichever cap is hit first.
-  maxActorsExpanded: 120,
+  // Raised from 120 actors / 1500 films: at those caps only the first
+  // few dozen co-stars had their full filmography loaded, so well-known
+  // films were missing for most actors a player landed on.
+  maxActorsExpanded: 300,
   minDiscoveredMovies: 300,
-  maxDiscoveredMovies: 1500,
+  maxDiscoveredMovies: 4000,
 
   // Upper bound on solver work per loop length, so a bad seed fails fast.
   solverStepBudget: 200_000,
@@ -115,10 +182,31 @@ function cachePathFor(urlPath) {
   return path.join(CACHE_DIR, `${safe}.json`);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How many days a saved answer for this request stays good. Spread by up
+// to a quarter either way (always the same for the same request) so that
+// files saved on the same day don't all expire on the same day.
+function cacheMaxAgeDays(urlPath, data) {
+  let days = CONFIG.cacheDaysLists;
+  if (urlPath.startsWith("/movie/")) {
+    const released = data && data.release_date ? Date.parse(data.release_date) : NaN;
+    const isNew = !Number.isFinite(released) || Date.now() - released < CONFIG.newReleaseWindowDays * DAY_MS;
+    days = isNew ? CONFIG.cacheDaysNewMovies : CONFIG.cacheDaysMovies;
+  }
+  let hash = 0;
+  for (let i = 0; i < urlPath.length; i++) hash = (hash * 31 + urlPath.charCodeAt(i)) % 1000;
+  return days * (0.75 + hash / 2000);
+}
+
 async function tmdb(urlPath, attempt = 1) {
   const file = cachePathFor(urlPath);
+  let stale = null; // an out-of-date saved answer, kept as a fallback
   if (fs.existsSync(file)) {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    const cached = JSON.parse(fs.readFileSync(file, "utf8"));
+    const ageDays = (Date.now() - fs.statSync(file).mtimeMs) / DAY_MS;
+    if (ageDays <= cacheMaxAgeDays(urlPath, cached)) return cached;
+    stale = cached;
   }
 
   const url = `${CONFIG.baseUrl}${urlPath}`;
@@ -129,6 +217,10 @@ async function tmdb(urlPath, attempt = 1) {
 
     if (res.status === 429 || res.status >= 500) {
       if (attempt > CONFIG.maxRetries) {
+        if (stale) {
+          console.log(`  TMDB still failing (${res.status}) — using the older saved answer for ${urlPath}`);
+          return stale;
+        }
         throw new Error(`TMDB request failed after ${CONFIG.maxRetries} retries (${res.status}): ${url}`);
       }
       const retryAfterHeader = res.headers.get("Retry-After");
@@ -162,6 +254,7 @@ async function loadExcludedMovieIds() {
 
 function isMarvelMovie(movieDetails) {
   if (CONFIG.excludedMovieIds.has(movieDetails.id)) return true;
+  if (CONFIG.excludedTitlePattern && CONFIG.excludedTitlePattern.test(movieDetails.title || "")) return true;
   const companyIds = (movieDetails.production_companies || []).map((c) => c.id);
   if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
   const keywordIds = ((movieDetails.keywords && movieDetails.keywords.keywords) || []).map((k) => k.id);
@@ -186,15 +279,65 @@ function isFictionalCastCredit(castMember) {
   return !CONFIG.selfAppearancePattern.test(character.trim());
 }
 
-async function resolveActorId(name) {
+// A person's credits list already carries each film's popularity, vote
+// count, release date and genres. Checking those here means films that
+// would be thrown out anyway are never fetched at all, which roughly
+// halves the number of TMDB requests and leaves the run time for films
+// that will actually be playable.
+function creditLooksExcluded(credit) {
+  if (!CONFIG.allowUnreleasedMovies && credit.release_date === "") return true;
+  if (typeof credit.popularity === "number" && credit.popularity < CONFIG.minPopularity) return true;
+  if (typeof credit.vote_count === "number" && credit.vote_count < CONFIG.minVoteCount) return true;
+  if (Array.isArray(credit.genre_ids) && credit.genre_ids.some((id) => CONFIG.excludedGenreIds.has(id))) return true;
+  return false;
+}
+
+// Looks a seed name up on TMDB and returns the person's id, the name as
+// TMDB spells it (accents and all — this is the name the game shows, and
+// it has to agree with the spelling used in every film's cast list), and
+// their profile photo path (null if TMDB has none). Returns null if
+// nobody was found.
+async function resolveActor(name) {
   const data = await tmdb(`/search/person?query=${encodeURIComponent(name)}&language=en-US`);
-  const match = (data.results || []).find((p) => p.known_for_department === "Acting");
-  return match ? match.id : (data.results && data.results[0] && data.results[0].id);
+  const results = data.results || [];
+  const match = results.find((p) => p.known_for_department === "Acting") || results[0];
+  if (!match) return null;
+  return { id: match.id, name: match.name || name, photo: match.profile_path || null };
 }
 
 // ---------------------------------------------------------------------
 // Graph building
 // ---------------------------------------------------------------------
+
+// The ids of the always-included films (see CONFIG). Best effort: if
+// TMDB's lists can't be fetched the puzzle is still generated, just
+// without the guarantee for that day.
+async function loadPopularPoolIds() {
+  const ids = new Set(CONFIG.alwaysIncludeMovieIds);
+  const base =
+    "/discover/movie?include_adult=false&language=en-US&sort_by=vote_count.desc" +
+    `&without_genres=${[...CONFIG.excludedGenreIds].join(",")}`;
+  // First of the month, so the request (and its saved answer) only
+  // changes once a month rather than every day.
+  const since = new Date();
+  since.setUTCDate(1);
+  since.setUTCMonth(since.getUTCMonth() - CONFIG.recentPoolMonths);
+  const sinceStr = since.toISOString().slice(0, 10);
+  try {
+    for (let page = 1; page <= CONFIG.popularPoolPages; page++) {
+      const data = await tmdb(`${base}&page=${page}`);
+      for (const m of data.results || []) ids.add(m.id);
+    }
+    for (let page = 1; page <= CONFIG.recentPoolPages; page++) {
+      const data = await tmdb(`${base}&primary_release_date.gte=${sinceStr}&page=${page}`);
+      for (const m of data.results || []) ids.add(m.id);
+    }
+  } catch (err) {
+    console.log(`  WARNING: could not load the full popular-film pool (${err.message}) — continuing with ${ids.size}`);
+  }
+  console.log(`Always-included film pool: ${ids.size} films (before filters).`);
+  return [...ids];
+}
 
 function makeGraphCache() {
   return { actors: {}, movies: {}, surviving: 0 };
@@ -228,11 +371,13 @@ async function expandMovie(movieId, cache, castDepth) {
   for (const c of cast) {
     const existing = cache.actors[c.id];
     if (!existing) {
-      cache.actors[c.id] = { name: c.name, movies: [], depth: castDepth, popularity: c.popularity ?? 0 };
+      cache.actors[c.id] = { name: c.name, movies: [], depth: castDepth, popularity: c.popularity ?? 0, photo: c.profile_path || null };
     } else {
       if (!existing.name) existing.name = c.name;
       existing.depth = Math.min(existing.depth, castDepth);
       existing.popularity = Math.max(existing.popularity, c.popularity ?? 0);
+      // Backup in case the search result for the start actor had no photo.
+      if (!existing.photo && c.profile_path) existing.photo = c.profile_path;
     }
   }
 
@@ -261,7 +406,10 @@ async function expandActor(actorId, cache) {
     throw err;
   }
 
-  const movieIds = (credits.cast || []).filter(isFictionalCastCredit).map((c) => c.id);
+  const movieIds = (credits.cast || [])
+    .filter(isFictionalCastCredit)
+    .filter((c) => !creditLooksExcluded(c))
+    .map((c) => c.id);
   for (const movieId of movieIds) {
     await expandMovie(movieId, cache, actor.depth + 1);
   }
@@ -285,9 +433,15 @@ function pickNextActor(cache) {
   return bestId;
 }
 
-async function buildGraph(startId, startName) {
+async function buildGraph(start, poolIds = []) {
   const cache = makeGraphCache();
-  cache.actors[startId] = { name: startName, movies: [], depth: 0, popularity: Infinity };
+  cache.actors[start.id] = { name: start.name, movies: [], depth: 0, popularity: Infinity, photo: start.photo };
+
+  // Load the always-included films first, so they are never crowded out
+  // by the film budget. Depth 99 keeps their casts at the back of the
+  // queue for full filmographies unless they turn out to be near the
+  // start actor.
+  for (const movieId of poolIds) await expandMovie(movieId, cache, 99);
 
   let expanded = 0;
   while (expanded < CONFIG.maxActorsExpanded) {
@@ -306,7 +460,11 @@ async function buildGraph(startId, startName) {
   return cache;
 }
 
-function trimGraph(cache) {
+// photoId: the one actor whose photo is written to the output. The game
+// only shows a photo on the START & FINISH ticket, so only the start
+// actor gets one — a photo path on every actor would add weight to the
+// file for pictures nobody ever sees.
+function trimGraph(cache, photoId = null) {
   const movies = {};
   for (const [id, m] of Object.entries(cache.movies)) {
     if (m._excluded) continue;
@@ -318,6 +476,7 @@ function trimGraph(cache) {
   for (const [id, a] of Object.entries(cache.actors)) {
     if (!a.name) continue;
     actors[id] = { name: a.name, movies: (a.movies || []).filter((movieId) => movies[movieId]) };
+    if (photoId !== null && String(id) === String(photoId) && a.photo) actors[id].photo = a.photo;
     if (a._expanded) expandedIds.push(String(id));
   }
   return { actors, movies, expandedIds };
@@ -337,9 +496,10 @@ function shuffle(list) {
 }
 
 // Co-star links between the fully expanded (well-known) actors only, so
-// sample solutions use recognisable names. An actor counts as being in a
-// film if the film is in their own list OR they are in its cast list,
-// which is the same rule the game page uses to accept a guess.
+// the loop that proves a puzzle is solvable uses recognisable names. An
+// actor counts as being in a film if the film is in their own list OR
+// they are in its cast list, which is the same rule the game page uses
+// to accept a guess.
 function buildCostarIndex(actors, movies, expandedIds) {
   const known = new Set(expandedIds.map(String));
   const castOf = {};
@@ -441,41 +601,44 @@ async function main() {
 
   fs.mkdirSync(CONFIG.outDir, { recursive: true });
   await loadExcludedMovieIds();
+  const poolIds = await loadPopularPoolIds();
 
   const yesterday = previousStartId();
   const candidates = shuffle(CONFIG.seedActorNames).slice(0, CONFIG.maxAttempts);
   let puzzle = null;
 
-  for (const [i, name] of candidates.entries()) {
-    console.log(`Attempt ${i + 1}: trying ${name}`);
+  for (const [i, seedName] of candidates.entries()) {
+    console.log(`Attempt ${i + 1}: trying ${seedName}`);
 
-    const startId = await resolveActorId(name);
-    if (!startId) {
+    const start = await resolveActor(seedName);
+    if (!start) {
       console.log("  could not resolve this actor, trying another");
       continue;
     }
-    if (startId === yesterday) {
+    if (start.name !== seedName) console.log(`  note: seed "${seedName}" resolved to "${start.name}" on TMDB`);
+    if (start.id === yesterday) {
       console.log("  same actor as yesterday, trying another");
       continue;
     }
 
-    const cache = await buildGraph(startId, name);
+    const cache = await buildGraph(start, poolIds);
     if (cache.surviving < CONFIG.minDiscoveredMovies) {
       console.log(`  graph too small (${cache.surviving} playable movies, need ${CONFIG.minDiscoveredMovies}) — trying another`);
       continue;
     }
 
-    const { actors, movies, expandedIds } = trimGraph(cache);
+    const { actors, movies, expandedIds } = trimGraph(cache, start.id);
     const index = buildCostarIndex(actors, movies, expandedIds);
 
+    // Proof that the puzzle can be solved. Kept out of the output file.
     const solutions = {};
     for (let length = CONFIG.minSteps; length <= CONFIG.maxSteps; length++) {
-      const loop = findLoop(startId, length, index);
+      const loop = findLoop(start.id, length, index);
       if (loop) solutions[length] = loop;
     }
 
     if (!solutions[CONFIG.minSteps]) {
-      console.log(`  no ${CONFIG.minSteps}-film loop found back to ${name} — trying another`);
+      console.log(`  no ${CONFIG.minSteps}-film loop found back to ${start.name} — trying another`);
       continue;
     }
 
@@ -483,7 +646,8 @@ async function main() {
       `  accepted. ${Object.keys(actors).length} actors, ${Object.keys(movies).length} movies, ` +
         `loops found for lengths: ${Object.keys(solutions).join(", ")}`
     );
-    puzzle = { start: startId, actors, movies, solutions };
+    if (!actors[start.id].photo) console.log(`  note: no TMDB photo for ${start.name} — the game will show initials`);
+    puzzle = { start: start.id, actors, movies };
     break;
   }
 
@@ -497,7 +661,6 @@ async function main() {
     start: puzzle.start,
     minSteps: CONFIG.minSteps,
     maxSteps: CONFIG.maxSteps,
-    solutions: puzzle.solutions,
     actors: puzzle.actors,
     movies: puzzle.movies,
   };
