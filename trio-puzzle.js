@@ -20,9 +20,10 @@
  *   4. Fetch the films for A, B and C (plus X's films) and write them out.
  *      That's all the game needs to check any guess.
  *
- * Same Marvel / X-Men / non-fiction / popularity filters as daily-puzzle.js.
- * They are copied rather than shared so this script has no dependency on the
- * other one, so if you change the filters there, mirror the change here.
+ * Same Marvel / X-Men / non-fiction / popularity filters and seed list as
+ * daily-puzzle.js. They are copied rather than shared so this script has no
+ * dependency on the other one, so if you change them there, mirror the
+ * change here.
  *
  * Output: out/trio-data.js, a single file that assigns window.TRIO_DATA.
  */
@@ -46,15 +47,47 @@ const CONFIG = {
   excludedGenreIds: new Set([99]), // Documentary
   selfAppearancePattern:
     /^(self|himself|herself|themselves|host|presenter|narrator|interviewee|archive footage)\b/i,
-  marvelCompanyIds: new Set([420, 7505]),
+
+  // Production companies treated as Marvel. 420 and 19551 match
+  // daily-puzzle.js; 7505 (Marvel Entertainment, the older Sony / Fox
+  // Marvel films) was already here and is kept, since this game is where
+  // Marvel films had been slipping through.
+  marvelCompanyIds: new Set([420, 7505, 19551]),
   excludedKeywordIds: new Set([180547]),
-  excludedMovieIds: new Set(),
+
+  // Individual films to exclude, by TMDB id (the number in the film's
+  // themoviedb.org address, e.g. themoviedb.org/movie/12345-some-title
+  // is 12345). Separate ids with commas. The X-Men list is added to this
+  // automatically at startup.
+  excludedMovieIds: new Set([
+  ]),
+
+  // Any film whose title matches this is excluded, whatever companies or
+  // keywords TMDB lists for it. Catches the Fox-era Deadpool films
+  // (Deadpool, Deadpool 2, Once Upon a Deadpool) and every Spider-Man
+  // film, including the original 2002-2007 trilogy, the Amazing
+  // Spider-Man pair and the animated Spider-Verse films. To block another
+  // franchise by name, add it inside the brackets with a | between names,
+  // e.g. /\b(deadpool|spider-?man|venom)\b/i
+  excludedTitlePattern: /\b(deadpool|spider-?man)\b/i,
+
   minPopularity: 3,
   minVoteCount: 50,
   allowUnreleasedMovies: false,
 
+  // How long a saved TMDB answer is trusted before it is fetched again
+  // (same rules as daily-puzzle.js, which shares this cache). Vote counts
+  // matter a lot here, since they decide which films count as "well
+  // known", so keeping them fresh matters.
+  cacheDaysLists: 7,         // an actor's film list, name searches, the X-Men list
+  cacheDaysMovies: 30,       // a film's details and cast
+  cacheDaysNewMovies: 3,     // ...when the film is new or not out yet
+  newReleaseWindowDays: 120, // "new" = released within this many days
+
   // ---- Trio-specific ----
-  // Answer actors and autocomplete decoys come from this list.
+  // Answer actors and autocomplete decoys come from this list. Same list
+  // as daily-puzzle.js. The names are only used to SEARCH TMDB; the name
+  // shown in the game is the one TMDB sends back (see resolveActor).
   seedActorNames: [
     "Tom Hanks", "Meryl Streep", "Denzel Washington", "Julia Roberts",
     "Leonardo DiCaprio", "Kate Winslet", "Brad Pitt", "Cate Blanchett",
@@ -63,13 +96,32 @@ const CONFIG = {
     "Morgan Freeman", "Emma Stone", "Christian Bale", "Viola Davis",
     "Henry Cavill", "Julia Stiles", "Kurt Russell", "James Spader",
     "Jennifer Lawrence", "Chris Pine", "Simon Pegg", "Zendaya",
-    "Idris Elba", "Tom Cruise", "Penelope Cruz", "Javier Bardem",
+    "Idris Elba", "Tom Cruise", "Penélope Cruz", "Javier Bardem",
     "Daniel Craig", "Kirsten Dunst", "Kristen Stewart", "Robert Pattinson",
     "Tom Hardy", "Anne Hathaway", "Chris Evans", "Chris Pratt",
     "Robert Downey Jr.", "Cillian Murphy", "Keanu Reeves", "Willem Dafoe",
     "Nicolas Cage", "Oscar Isaac", "Anthony Hopkins", "Jodie Foster",
     "Hilary Swank", "Margot Robbie", "Helen Mirren", "Michael Caine",
-    "Ryan Gosling", "Ben Affleck", "Emma Watson"
+    "Ryan Gosling", "Ben Affleck", "Emma Watson",
+    // Actors with a nickname shortcut in the game
+    "Timothée Chalamet", "Benedict Cumberbatch", "Owen Wilson", "Matthew McConaughey",
+    // Current names
+    "Florence Pugh", "Saoirse Ronan", "Adam Driver", "Joaquin Phoenix",
+    "Amy Adams", "Jake Gyllenhaal", "Emily Blunt", "Jessica Chastain",
+    "Natalie Portman", "Michael B. Jordan", "Daniel Kaluuya", "Mahershala Ali",
+    "Michelle Yeoh", "Pedro Pascal", "Ana de Armas", "Dev Patel",
+    // Long, well-connected careers
+    "Robert De Niro", "Al Pacino", "Harrison Ford", "Jeff Bridges",
+    "Sigourney Weaver", "Michelle Pfeiffer", "Susan Sarandon", "Julianne Moore",
+    "Frances McDormand", "Gary Oldman", "Ralph Fiennes", "Emma Thompson",
+    "Judi Dench", "Bill Murray", "Woody Harrelson", "Steve Buscemi",
+    // Household names
+    "Bradley Cooper", "Jennifer Aniston", "Reese Witherspoon", "Cameron Diaz",
+    "Hugh Grant", "Colin Firth", "Jack Nicholson", "Dustin Hoffman",
+    "Robin Williams", "Jim Carrey", "Eddie Murphy", "Ben Stiller",
+    "Adam Sandler", "Angelina Jolie", "Johnny Depp", "Russell Crowe",
+    "Liam Neeson", "Ewan McGregor", "Keira Knightley", "Rachel McAdams",
+    "Mark Wahlberg", "Jamie Foxx", "Octavia Spencer", "Glenn Close"
   ],
 
   maxAnswerMovies: 25,        // how many of X's films to scan for candidates
@@ -120,28 +172,43 @@ function cachePathFor(urlPath) {
   return path.join(CONFIG.cacheDir, `${safe}.json`);
 }
 
+// Lowercase, trimmed, accents stripped (same rule as the game pages).
+function normName(name) {
+  return String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
 async function loadExcludedMovieIds() {
-  const listUrl = "/list/27741?language=en-US";
-  const file = cachePathFor(listUrl);
-  let data;
-
-  if (fs.existsSync(file)) {
-    data = JSON.parse(fs.readFileSync(file, "utf8"));
-  } else {
-    const url = `${CONFIG.baseUrl}${listUrl}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${TMDB_KEY}` } });
-    if (!res.ok) throw new Error(`TMDB X-Men list request failed (${res.status}): ${url}`);
-    data = await res.json();
-    fs.mkdirSync(CONFIG.cacheDir, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(data));
-  }
-
+  // The X-Men list, fetched through the shared cache like everything else.
+  const data = await tmdb("/list/27741?language=en-US");
   for (const item of data.items || []) CONFIG.excludedMovieIds.add(item.id);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How many days a saved answer for this request stays good. Spread by up
+// to a quarter either way (always the same for the same request) so that
+// files saved on the same day don't all expire on the same day.
+function cacheMaxAgeDays(urlPath, data) {
+  let days = CONFIG.cacheDaysLists;
+  if (urlPath.startsWith("/movie/")) {
+    const released = data && data.release_date ? Date.parse(data.release_date) : NaN;
+    const isNew = !Number.isFinite(released) || Date.now() - released < CONFIG.newReleaseWindowDays * DAY_MS;
+    days = isNew ? CONFIG.cacheDaysNewMovies : CONFIG.cacheDaysMovies;
+  }
+  let hash = 0;
+  for (let i = 0; i < urlPath.length; i++) hash = (hash * 31 + urlPath.charCodeAt(i)) % 1000;
+  return days * (0.75 + hash / 2000);
 }
 
 async function tmdb(urlPath, attempt = 1) {
   const file = cachePathFor(urlPath);
-  if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8"));
+  let stale = null; // an out-of-date saved answer, kept as a fallback
+  if (fs.existsSync(file)) {
+    const cached = JSON.parse(fs.readFileSync(file, "utf8"));
+    const ageDays = (Date.now() - fs.statSync(file).mtimeMs) / DAY_MS;
+    if (ageDays <= cacheMaxAgeDays(urlPath, cached)) return cached;
+    stale = cached;
+  }
 
   const url = `${CONFIG.baseUrl}${urlPath}`;
   return limiter(async () => {
@@ -149,6 +216,10 @@ async function tmdb(urlPath, attempt = 1) {
 
     if (res.status === 429 || res.status >= 500) {
       if (attempt > CONFIG.maxRetries) {
+        if (stale) {
+          console.log(`  TMDB still failing (${res.status}) — using the older saved answer for ${urlPath}`);
+          return stale;
+        }
         throw new Error(`TMDB request failed after ${CONFIG.maxRetries} retries (${res.status}): ${url}`);
       }
       const retryAfterHeader = res.headers.get("Retry-After");
@@ -173,8 +244,13 @@ async function tmdb(urlPath, attempt = 1) {
 // ---------------------------------------------------------------
 // Filters (mirrors daily-puzzle.js)
 // ---------------------------------------------------------------
+function isExcludedTitle(title) {
+  return Boolean(CONFIG.excludedTitlePattern && CONFIG.excludedTitlePattern.test(title || ""));
+}
+
 function isMarvelMovie(details) {
   if (CONFIG.excludedMovieIds.has(details.id)) return true;
+  if (isExcludedTitle(details.title)) return true;
   const companyIds = (details.production_companies || []).map((c) => c.id);
   if (companyIds.some((id) => CONFIG.marvelCompanyIds.has(id))) return true;
   const keywordIds = ((details.keywords && details.keywords.keywords) || []).map((k) => k.id);
@@ -201,10 +277,16 @@ function isFictionalCastCredit(castMember) {
 // ---------------------------------------------------------------
 // Data helpers
 // ---------------------------------------------------------------
-async function resolveActorId(name) {
+
+// Looks a seed name up on TMDB and returns the person's id and the name as
+// TMDB spells it (accents and all — the name the game shows, which has to
+// agree with the spelling in every film's cast list). Null if not found.
+async function resolveActor(name) {
   const data = await tmdb(`/search/person?query=${encodeURIComponent(name)}&language=en-US`);
-  const match = (data.results || []).find((p) => p.known_for_department === "Acting");
-  return match ? match.id : data.results && data.results[0] && data.results[0].id;
+  const results = data.results || [];
+  const match = results.find((p) => p.known_for_department === "Acting") || results[0];
+  if (!match) return null;
+  return { id: match.id, name: match.name || name };
 }
 
 // An actor's fictional film credits, straight from TMDB (404 = merged/deleted person).
@@ -226,6 +308,7 @@ function creditLooksPlayable(credit) {
   if ((credit.vote_count ?? 0) < CONFIG.minVoteCount) return false;
   if ((credit.genre_ids || []).some((id) => CONFIG.excludedGenreIds.has(id))) return false;
   if (CONFIG.excludedMovieIds.has(credit.id)) return false;
+  if (isExcludedTitle(credit.title)) return false;
   return true;
 }
 
@@ -295,10 +378,11 @@ function costarsOf(graph, actorId) {
 // Puzzle search
 // ---------------------------------------------------------------
 async function tryBuildPuzzle() {
-  const answerName = shuffle(CONFIG.seedActorNames)[0];
-  const answerId = await resolveActorId(answerName);
-  if (!answerId) { console.log(`  could not resolve ${answerName}`); return null; }
-  console.log(`  answer actor: ${answerName}`);
+  const seedName = shuffle(CONFIG.seedActorNames)[0];
+  const answer = await resolveActor(seedName);
+  if (!answer) { console.log(`  could not resolve ${seedName}`); return null; }
+  const answerId = answer.id, answerName = answer.name;
+  console.log(`  answer actor: ${answerName}` + (answerName !== seedName ? ` (seed "${seedName}")` : ""));
 
   const graph = { actors: {}, movies: {} };
   graph.actors[answerId] = { name: answerName };
@@ -400,9 +484,10 @@ function buildPayload({ graph, trioIds, answerId }) {
 
   // Names for autocomplete that are NOT in the data. They never match a film,
   // so guessing one is a valid, all-crosses guess, and they stop the
-  // suggestion list from containing only relevant actors.
-  const known = new Set(Object.values(actors).map((a) => a.name.toLowerCase()));
-  const decoys = CONFIG.seedActorNames.filter((n) => !known.has(n.toLowerCase()));
+  // suggestion list from containing only relevant actors. Compared ignoring
+  // accents, so a seed spelled without one never shows up twice.
+  const known = new Set(Object.values(actors).map((a) => normName(a.name)));
+  const decoys = CONFIG.seedActorNames.filter((n) => !known.has(normName(n)));
 
   return {
     date: process.env.PUZZLE_DATE || new Date().toISOString().slice(0, 10),
